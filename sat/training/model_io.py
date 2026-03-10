@@ -293,7 +293,7 @@ def load_checkpoint(model, args, load_path=None, prefix='', specific_iteration=N
                 torch.distributed.get_rank(), checkpoint_name))
             
     # load state_dict into CPU        
-    sd = torch.load(checkpoint_name, map_location='cpu')
+    sd = torch.load(checkpoint_name, map_location='cpu', weights_only=False)
 
     # if given `prefix`, load a speficic prefix in the checkpoint, e.g. encoder
     new_sd = {'module':{}}

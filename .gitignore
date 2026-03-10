@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+
+# Model cache & checkpoints
+.cache/
+ckpts_5b/
+
+# Results & logs
+results/
+runs/
+logs/
+
+# Third-party tools
+common_metrics_on_video_quality/
+
+# Temporary files
+*.swp
+*.swo
+*~

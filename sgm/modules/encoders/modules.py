@@ -114,7 +114,7 @@ class GeneralConditioner(nn.Module):
         self.cor_embs = cor_embs
         self.cor_p = cor_p
 
-        self.siglip_model = AutoModel.from_pretrained("/inspire/hdd/project/roboticarm/fuyanwei-24014/gjx/models/google/siglip2-so400m-patch14-384")
+        self.siglip_model = AutoModel.from_pretrained("/data/lilehui/cinebrain/models/google/siglip2-so400m-patch14-384")
 
 
     def possibly_get_ucg_val(self, embedder: AbstractEmbModel, batch: Dict) -> Dict:
@@ -240,7 +240,7 @@ class GeneralConditioner(nn.Module):
 
 
 def torch_init_model(model, init_checkpoint):
-    state_dict = torch.load(init_checkpoint, map_location='cpu')
+    state_dict = torch.load(init_checkpoint, map_location='cpu', weights_only=False)
     missing_keys = []
     unexpected_keys = []
     error_msgs = []

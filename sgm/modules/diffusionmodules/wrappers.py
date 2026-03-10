@@ -23,7 +23,8 @@ class IdentityWrapper(nn.Module):
 class OpenAIWrapper(IdentityWrapper):
     def forward(self, x: torch.Tensor, t: torch.Tensor, c: dict, **kwargs) -> torch.Tensor:
         for key in c:
-            c[key] = c[key].to(self.dtype)
+            if isinstance(c[key], torch.Tensor):
+                c[key] = c[key].to(self.dtype)
 
         if x.dim() == 4:
             x = torch.cat((x, c.get("concat", torch.Tensor([]).type_as(x))), dim=1)
