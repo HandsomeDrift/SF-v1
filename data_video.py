@@ -512,7 +512,8 @@ class BrainDataset(Dataset):
         self.video_size = video_size
         decord.bridge.set_bridge("torch")
 
-        self.text_processor = AutoProcessor.from_pretrained("/data/lilehui/cinebrain/models/google/siglip2-so400m-patch14-384")
+        from local_config import get_paths
+        self.text_processor = AutoProcessor.from_pretrained(get_paths()["siglip2"])
         # 创建视频处理器
         image_processor = SiglipImageProcessor(
             do_resize=True,

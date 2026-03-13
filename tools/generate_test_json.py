@@ -1,6 +1,10 @@
-import json, os
+import json, os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-data_root = "/data/lilehui/cinebrain/datasets"
+from local_config import get_paths
+_paths = get_paths()
+data_root = _paths["dataset_root"]
+video_dir = os.path.basename(_paths["video_dir"])
 
 with open(os.path.join(data_root, "captions-qwen-2.5-vl-7b.json")) as f:
     captions_raw = json.load(f)
@@ -26,7 +30,7 @@ def generate_test_json(sub_id, group):
         else:
             video_id = 5400 + (clip_idx - 2700)
 
-        video_path = os.path.join(data_root, "videos", f"{str(video_id).zfill(6)}.mp4")
+        video_path = os.path.join(data_root, video_dir, f"{str(video_id).zfill(6)}.mp4")
         fmri_base = clip_idx * 5
         fmri_paths = [os.path.join(data_root, f"sub-{sub_id}", "visual_audio", f"{fmri_base+j}.npy") for j in range(5)]
         eeg_paths = [os.path.join(data_root, f"sub-{sub_id}", "eeg_02", f"{fmri_base+j}.npy") for j in range(5)]

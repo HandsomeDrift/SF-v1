@@ -255,11 +255,55 @@ def initialize_distributed(args):
     return True
 
 
+def _replace_placeholder(d, placeholder, value):
+    """Recursively replace placeholder string in a nested dict/DictConfig."""
+    if isinstance(d, (dict, omegaconf.DictConfig)):
+        for k in d:
+            if d[k] == placeholder:
+                d[k] = value
+            elif isinstance(d[k], (dict, omegaconf.DictConfig, list, omegaconf.ListConfig)):
+                _replace_placeholder(d[k], placeholder, value)
+    elif isinstance(d, (list, omegaconf.ListConfig)):
+        for i, item in enumerate(d):
+            if item == placeholder:
+                d[i] = value
+            elif isinstance(item, (dict, omegaconf.DictConfig, list, omegaconf.ListConfig)):
+                _replace_placeholder(item, placeholder, value)
+
+
+def _inject_local_config(config):
+    """Replace __LOCAL_CONFIG_*__ placeholders with paths from local_config.yaml."""
+    try:
+        from local_config import get_paths
+        lp = get_paths()
+    except (ImportError, FileNotFoundError):
+        return  # No local_config, use paths as-is
+
+    # Replace in args section
+    if "args" in config:
+        args_cfg = config["args"]
+        if args_cfg.get("load") == "__LOCAL_CONFIG_TRANSFORMER__":
+            args_cfg["load"] = lp["transformer"]
+        for key in ("train_data", "valid_data"):
+            if key in args_cfg and isinstance(args_cfg[key], (list, omegaconf.ListConfig)):
+                args_cfg[key] = [
+                    p.replace("__LOCAL_CONFIG_DATASET_ROOT__", lp["dataset_root"])
+                    if isinstance(p, str) else p
+                    for p in args_cfg[key]
+                ]
+
+    # Replace in model config (VAE ckpt_path)
+    if "model" in config:
+        _replace_placeholder(config["model"], "__LOCAL_CONFIG_VAE__", lp["vae"])
+
+
 def process_config_to_args(args):
     """Fetch args from only --base"""
 
     configs = [OmegaConf.load(cfg) for cfg in args.base]
     config = OmegaConf.merge(*configs)
+
+    _inject_local_config(config)
 
     args_config = config.pop("args", OmegaConf.create())
     for key in args_config:

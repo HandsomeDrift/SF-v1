@@ -3,7 +3,7 @@ args:
   model_parallel_size: 1
   experiment_name: brain_lora_va_sub05
   mode: finetune
-  load: /data/lilehui/cinebrain/CogVideoX-5b-sat/transformer
+  load: __LOCAL_CONFIG_TRANSFORMER__
   no_load_rng: True
   train_iters: 10000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
@@ -12,8 +12,8 @@ args:
   save: ckpts_5b
   save_interval: 500
   log_interval: 20
-  train_data: [ "/data/lilehui/cinebrain/datasets/sub-0005_train_va.json" ] # Train data path
-  valid_data: [ "/data/lilehui/cinebrain/datasets/sub-0005_test_va.json" ] # Validation data path, can be the same as train_data (not recommended)
+  train_data: [ "__LOCAL_CONFIG_DATASET_ROOT__/sub-0005_train_va.json" ] # Train data path
+  valid_data: [ "__LOCAL_CONFIG_DATASET_ROOT__/sub-0005_test_va.json" ] # Validation data path
   split: 1,0,0
   num_workers: 8
   force_train: True

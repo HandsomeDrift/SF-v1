@@ -114,7 +114,8 @@ class GeneralConditioner(nn.Module):
         self.cor_embs = cor_embs
         self.cor_p = cor_p
 
-        self.siglip_model = AutoModel.from_pretrained("/data/lilehui/cinebrain/models/google/siglip2-so400m-patch14-384")
+        from local_config import get_paths
+        self.siglip_model = AutoModel.from_pretrained(get_paths()["siglip2"])
 
 
     def possibly_get_ucg_val(self, embedder: AbstractEmbModel, batch: Dict) -> Dict:

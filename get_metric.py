@@ -1,5 +1,6 @@
 import os, sys, time
 import numpy as np
+from local_config import get_paths
 from models.eval_metrics import (
     load_vit_model, load_clip_model,
     clip_score_only, ssim_score_only, psnr_score_only,
@@ -22,7 +23,7 @@ def main(data_path):
             print(f'  loading {i-7560}/540 ...')
         pred = iio.imread(os.path.join(data_path, f'{str(i).zfill(6)}.mp4'), index=None)
         gt = iio.imread(
-            os.path.join("/data/lilehui/cinebrain/datasets/videos", f'{str(i).zfill(6)}.mp4'),
+            os.path.join(get_paths()["video_dir"], f'{str(i).zfill(6)}.mp4'),
             index=None
         )
         gt_list.append(gt)
