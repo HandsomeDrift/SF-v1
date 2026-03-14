@@ -11,23 +11,41 @@ from models.eval_metrics import (
 import imageio.v3 as iio
 import torch
 
-def main(data_path):
+def main(data_path, sub_id=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     t0 = time.time()
 
+    # Determine video range from test JSON
+    if sub_id:
+        import json
+        json_path = os.path.join(get_paths()["dataset_root"], f"sub-00{sub_id}_test_va.json")
+        with open(json_path) as f:
+            test_data = json.load(f)
+        video_ids = sorted([int(os.path.basename(d["video"]).split(".")[0]) for d in test_data])
+        print(f"sub-{sub_id}: {len(video_ids)} test videos, range {video_ids[0]}-{video_ids[-1]}")
+    else:
+        video_ids = list(range(7560, 8100))
+
     gt_list = []
     pred_list = []
+    skipped = 0
     print('loading test results ...')
-    for i in range(7560, 8100):
-        if i % 100 == 0:
-            print(f'  loading {i-7560}/540 ...')
-        pred = iio.imread(os.path.join(data_path, f'{str(i).zfill(6)}.mp4'), index=None)
+    for idx, i in enumerate(video_ids):
+        if idx % 100 == 0:
+            print(f'  loading {idx}/{len(video_ids)} ...')
+        pred_path = os.path.join(data_path, f'{str(i).zfill(6)}.mp4')
+        if not os.path.exists(pred_path):
+            skipped += 1
+            continue
+        pred = iio.imread(pred_path, index=None)
         gt = iio.imread(
             os.path.join(get_paths()["video_dir"], f'{str(i).zfill(6)}.mp4'),
             index=None
         )
         gt_list.append(gt)
         pred_list.append(pred[:33])
+    if skipped:
+        print(f'  skipped {skipped} missing files')
     print(f'test results loaded in {time.time()-t0:.1f}s')
 
     gt_list = np.stack(gt_list)
@@ -141,4 +159,8 @@ def main(data_path):
     print(f'Total time: {time.time()-t0:.1f}s')
 
 if __name__ == '__main__':
-    main(data_path='results/brain_va_5b_sub05')
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--sub', required=True, help='Subject ID, e.g. 01, 05')
+    args = parser.parse_args()
+    main(data_path=f'results/brain_va_5b_sub{args.sub}', sub_id=args.sub)

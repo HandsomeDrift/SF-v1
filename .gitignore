@@ -25,3 +25,27 @@ local_config.yaml
 *.swp
 *.swo
 *~
+
+# Temporary split JSON files
+sub*_remaining_part*.json
+cross_*_part*.json
+
+# AI tool configs
+AGENTS.md
+CLAUDE.md
+OPENCODE_RULES.md
+opencode.jsonc
+
+# Auto-generated docs
+COGVIDEO_DEPS_STATUS.md
+ENVIRONMENT_*.md
+INSTALL_COMPLETE.md
+QUICK_SETUP.md
+
+# Misc temp files
+test_download/
+CineBrain_dataset/
+setup_cinebrain.sh
+check_environment.py
+cogvideo_requirements.txt
+run_all_inference.sh

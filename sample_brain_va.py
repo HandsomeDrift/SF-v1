@@ -138,9 +138,17 @@ def sampling_main(args, model_cls):
     # T = 9
     T, C = args.sampling_num_frames, args.latent_channels
     with torch.no_grad():
+        skipped = 0
         for data_item in tqdm(json_data):
             video_path = data_item["video"]
             save_name = os.path.basename(video_path).split(".")[0]
+            save_path = os.path.join(args.output_dir, save_name + ".mp4")
+            if os.path.exists(save_path):
+                skipped += 1
+                continue
+            if skipped > 0:
+                print(f"Skipped {skipped} already completed samples")
+                skipped = 0
             fmri_path = data_item["fmri"]
             fmri_data_list = []
             for i in range(len(fmri_path)):
