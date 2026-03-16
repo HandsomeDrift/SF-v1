@@ -162,5 +162,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--sub', required=True, help='Subject ID, e.g. 01, 05')
+    parser.add_argument('--data_path', default=None, help='Override result directory (for cross-subject eval)')
     args = parser.parse_args()
-    main(data_path=f'results/brain_va_5b_sub{args.sub}', sub_id=args.sub)
+    data_path = args.data_path or f'results/brain_va_5b_sub{args.sub}'
+    main(data_path=data_path, sub_id=args.sub)
