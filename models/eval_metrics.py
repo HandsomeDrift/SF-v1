@@ -246,24 +246,172 @@ def channel_last(img):
         raise ValueError(f'img shape should be 3 or 4, but got {len(img.shape)}')
     return img
 
-def ssim_score_only(pred_videos: np.array, gt_videos: np.array, **kwargs):
+def _ssim_single(args):
+    pred, gt = args
+    return ssim(pred, gt, data_range=255, channel_axis=-1)
+
+def _psnr_single(args):
+    pred, gt = args
+    return psnr(gt.astype(np.float64), pred.astype(np.float64), data_range=255)
+
+def ssim_score_only(pred_videos: np.array, gt_videos: np.array, num_workers: int = 8, **kwargs):
+    from multiprocessing import Pool
     pred_videos = channel_last(pred_videos)
     gt_videos = channel_last(gt_videos)
-    scores = []
-    for pred, gt in zip(pred_videos, gt_videos):
-        scores.append(ssim_metric(pred, gt))
+    with Pool(num_workers) as pool:
+        scores = pool.map(_ssim_single, list(zip(pred_videos, gt_videos)))
     return np.mean(scores), np.std(scores)
 
-def psnr_score_only(pred_videos: np.array, gt_videos: np.array, **kwargs):
+def psnr_score_only(pred_videos: np.array, gt_videos: np.array, num_workers: int = 8, **kwargs):
+    from multiprocessing import Pool
     pred_videos = channel_last(pred_videos)
     gt_videos = channel_last(gt_videos)
-    scores = []
-    for pred, gt in zip(pred_videos, gt_videos):
-        scores.append(psnr(gt.astype(np.float64), pred.astype(np.float64), data_range=255))
+    with Pool(num_workers) as pool:
+        scores = pool.map(_psnr_single, list(zip(pred_videos, gt_videos)))
     return np.mean(scores), np.std(scores)
 
 def ssim_metric(img1, img2):
     return ssim(img1, img2, data_range=255, channel_axis=-1)
+
+
+# ==================== Mind-Animator metrics ====================
+
+def hue_pcc(pred_videos: np.array, gt_videos: np.array):
+    """Hue-based Pearson Correlation Coefficient (Mind-Animator pixel-level metric).
+    Computes cosine similarity between hue channels in HSV space.
+    Handles both image arrays (N,H,W,C) and video arrays (N,T,H,W,C).
+    """
+    import cv2
+    # Flatten video dims: (N,T,H,W,C) -> (N*T, H, W, C)
+    if pred_videos.ndim == 5:
+        n, t = pred_videos.shape[:2]
+        pred_flat = pred_videos.reshape(n * t, *pred_videos.shape[2:])
+        gt_flat = gt_videos.reshape(n * t, *gt_videos.shape[2:])
+    else:
+        pred_flat = pred_videos
+        gt_flat = gt_videos
+    pred_flat = channel_last(pred_flat)
+    gt_flat = channel_last(gt_flat)
+    scores = []
+    for pred, gt in zip(pred_flat, gt_flat):
+        pred_hsv = cv2.cvtColor(pred.astype(np.uint8), cv2.COLOR_RGB2HSV)
+        gt_hsv = cv2.cvtColor(gt.astype(np.uint8), cv2.COLOR_RGB2HSV)
+        pred_hue = pred_hsv[:, :, 0].astype(np.float64) / 180.0
+        gt_hue = gt_hsv[:, :, 0].astype(np.float64) / 180.0
+        norm_pred = np.sqrt(np.sum(pred_hue ** 2))
+        norm_gt = np.sqrt(np.sum(gt_hue ** 2))
+        if norm_pred < 1e-8 or norm_gt < 1e-8:
+            scores.append(0.0)
+        else:
+            scores.append(np.sum(pred_hue * gt_hue) / (norm_pred * norm_gt))
+    return np.mean(scores), np.std(scores)
+
+
+def _compute_epe_single(args):
+    """Worker function for parallel EPE computation."""
+    import cv2
+    pred_vid, gt_vid = args
+    vid_epes = []
+    for i in range(len(pred_vid) - 1):
+        p0 = cv2.cvtColor(pred_vid[i].astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        p1 = cv2.cvtColor(pred_vid[i + 1].astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        g0 = cv2.cvtColor(gt_vid[i].astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        g1 = cv2.cvtColor(gt_vid[i + 1].astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        flow_pred = cv2.calcOpticalFlowFarneback(p0, p1, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        flow_gt = cv2.calcOpticalFlowFarneback(g0, g1, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        vid_epes.append(np.mean(np.linalg.norm(flow_gt - flow_pred, axis=-1)))
+    return np.mean(vid_epes)
+
+
+def compute_epe(pred_videos: np.array, gt_videos: np.array, num_workers: int = 8):
+    """End-Point Error using Farneback optical flow (Mind-Animator ST-level metric).
+    Uses multiprocessing for parallel computation across videos.
+    """
+    from multiprocessing import Pool
+    args = [(pred_videos[i], gt_videos[i]) for i in range(len(pred_videos))]
+    with Pool(num_workers) as pool:
+        epe_scores = pool.map(_compute_epe_single, args)
+    return np.mean(epe_scores), np.std(epe_scores)
+
+
+@torch.no_grad()
+def vifi_score(
+        pred_videos: np.array,
+        gt_videos: np.array,
+        cache_dir: str = '.cache',
+        device: Optional[str] = 'cuda',
+        batch_size: int = 256
+):
+    """VIFI-Score: Video-level CLIP similarity using ViT-B/16 with temporal mean pooling.
+    Approximates ViFi-CLIP (Rasheed et al., CVPR 2023) by averaging per-frame
+    CLIP features to produce video-level representations, then computing cosine similarity.
+    """
+    import open_clip
+    try:
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            'ViT-B-16', pretrained='openai', cache_dir=cache_dir
+        )
+    except RuntimeError as e:
+        print(f'  [VIFI-Score] Model download failed, skipping: {e}')
+        return float('nan'), float('nan')
+    model = model.to(device).eval()
+
+    n, t = pred_videos.shape[:2]
+
+    def _extract_video_features(videos_np):
+        all_frames = videos_np.reshape(n * t, *videos_np.shape[2:])
+        from torchvision.transforms.functional import normalize as tv_normalize, resize as tv_resize
+        frame_feats = []
+        for i in range(0, len(all_frames), batch_size):
+            batch = all_frames[i:i+batch_size]
+            imgs = torch.from_numpy(batch).permute(0, 3, 1, 2).float() / 255.0
+            imgs = tv_resize(imgs, [224, 224], antialias=True)
+            imgs = tv_normalize(imgs,
+                                [0.48145466, 0.4578275, 0.40821073],
+                                [0.26862954, 0.26130258, 0.27577711])
+            feats = model.encode_image(imgs.to(device)).float().cpu()
+            frame_feats.append(feats)
+        frame_feats = torch.cat(frame_feats, dim=0).view(n, t, -1)
+        video_feats = frame_feats.mean(dim=1)
+        return F.normalize(video_feats, dim=-1)
+
+    pred_feats = _extract_video_features(pred_videos)
+    gt_feats = _extract_video_features(gt_videos)
+    per_video_scores = F.cosine_similarity(pred_feats, gt_feats, dim=-1).numpy()
+    return np.mean(per_video_scores), np.std(per_video_scores), per_video_scores
+
+
+@torch.no_grad()
+def clip_pcc(
+        pred_videos: np.array,
+        vifi_per_video: np.array = None,
+        vifi_threshold: float = 0.6,
+        cache_dir: str = '.cache',
+        device: Optional[str] = 'cuda',
+        batch_size: int = 256,
+        preloaded: Optional[Tuple] = None
+):
+    """CLIP-PCC: Adjacent frame CLIP consistency with VIFI threshold filtering.
+    Per Mind-Animator: only compute for videos where VIFI > threshold, assign 0 otherwise.
+    """
+    if preloaded is not None:
+        clip_processor, clip_model = preloaded
+    else:
+        clip_processor, clip_model = load_clip_model(cache_dir, device)
+
+    n, t = pred_videos.shape[:2]
+    all_frames = pred_videos.reshape(n * t, *pred_videos.shape[2:])
+    all_feats = _batch_clip_features(all_frames, clip_processor, clip_model, device, batch_size)
+    all_feats = F.normalize(all_feats, dim=-1).view(n, t, -1)
+
+    scores = []
+    for i in range(n):
+        if vifi_per_video is not None and vifi_per_video[i] < vifi_threshold:
+            scores.append(0.0)
+        else:
+            sims = F.cosine_similarity(all_feats[i, :-1], all_feats[i, 1:], dim=-1)
+            scores.append(sims.mean().item())
+    return np.mean(scores), np.std(scores)
 
 def remove_overlap(pred_videos, gt_videos, scene_seg_list, get_scene_seg=False):
     pred_list = []
