@@ -1,0 +1,149 @@
+<mxGraphModel>
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+
+    <!-- TITLE -->
+    <mxCell id="title" value="CineBrain-SF v1  Slow-Fast Dual-Branch Architecture" style="text;fontSize=22;fontStyle=1;align=center;fillColor=none;strokeColor=none;fontColor=#333333;" vertex="1" parent="1">
+      <mxGeometry x="50" y="10" width="700" height="30" as="geometry"/>
+    </mxCell>
+
+    <!-- ===== INPUTS ===== -->
+    <mxCell id="fmri_in" value="fMRI Input&#xa;(B,5,8405) Visual ROI" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="40" y="60" width="160" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="eeg_in" value="EEG Input&#xa;(B,5,64,800) 4s Seg" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="600" y="60" width="160" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="siglip" value="SigLIP2&#xa;(frozen)" style="rounded=1;fillColor=#f5f5f5;strokeColor=#aaa;fontSize=10;fontStyle=2;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="355" y="62" width="90" height="36" as="geometry"/>
+    </mxCell>
+
+    <!-- ===== ENCODERS ===== -->
+    <mxCell id="fmri_enc" value="fMRI Transformer  24L·2048d&#xa;→ (B,226,2048) + CLS(1152)" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="20" y="140" width="200" height="45" as="geometry"/>
+    </mxCell>
+    <mxCell id="eeg_enc" value="EEG Transformer  12L·2048d&#xa;→ (B,226,2048) + CLS(1152)" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="580" y="140" width="200" height="45" as="geometry"/>
+    </mxCell>
+
+    <!-- CLIP box -->
+    <mxCell id="clip" value="5-way CLIP Alignment&#xa;fMRI↔Video · fMRI↔Text&#xa;EEG↔Video · EEG↔Text · EEG↔fMRI" style="rounded=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;whiteSpace=wrap;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="280" y="132" width="240" height="55" as="geometry"/>
+    </mxCell>
+
+    <!-- Input→Enc -->
+    <mxCell id="e01" style="endArrow=classic;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" source="fmri_in" target="fmri_enc" parent="1"/>
+    <mxCell id="e02" style="endArrow=classic;strokeColor=#82b366;strokeWidth=2;" edge="1" source="eeg_in" target="eeg_enc" parent="1"/>
+    <mxCell id="e03" style="endArrow=classic;strokeColor=#d6b656;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="fmri_enc" target="clip" parent="1"/>
+    <mxCell id="e04" style="endArrow=classic;strokeColor=#d6b656;dashed=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" source="eeg_enc" target="clip" parent="1"/>
+    <mxCell id="e05" style="endArrow=classic;strokeColor=#aaa;dashed=1;" edge="1" source="siglip" target="clip" parent="1"/>
+
+    <!-- ===== SLOW BRANCH ===== -->
+    <mxCell id="sbox" value="" style="rounded=1;fillColor=#EEF4FF;strokeColor=#6c8ebf;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="10" y="210" width="370" height="200" as="geometry"/>
+    </mxCell>
+    <mxCell id="slbl" value="SLOW BRANCH (fMRI → Semantic/Structure)" style="text;fontSize=12;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#4472C4;" vertex="1" parent="1">
+      <mxGeometry x="20" y="214" width="350" height="18" as="geometry"/>
+    </mxCell>
+    <mxCell id="av" value="AV Context Adapter&#xa;(Cross-Attention)" style="rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="30" y="245" width="150" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="sfeat" value="slow_feat (B,226,2048)" style="text;fontSize=9;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#4472C4;" vertex="1" parent="1">
+      <mxGeometry x="200" y="255" width="160" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="hk" value="KeyframeHead&#xa;z_key (B,1152)" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="20" y="310" width="110" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="ht" value="SceneTextHead&#xa;z_txt (B,1152)" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="140" y="310" width="110" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="hs" value="StructureHead&#xa;z_str (B,226,2048)" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="260" y="310" width="110" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="e10" style="endArrow=classic;strokeColor=#6c8ebf;" edge="1" source="fmri_enc" target="av" parent="1"/>
+    <mxCell id="e11" style="endArrow=classic;strokeColor=#6c8ebf;" edge="1" source="av" target="hk" parent="1"/>
+    <mxCell id="e12" style="endArrow=classic;strokeColor=#6c8ebf;exitX=0.7;exitY=1;entryX=0.5;entryY=0;" edge="1" source="av" target="ht" parent="1"/>
+    <mxCell id="e13" style="endArrow=classic;strokeColor=#6c8ebf;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" source="av" target="hs" parent="1"/>
+
+    <!-- ===== FAST BRANCH ===== -->
+    <mxCell id="fbox" value="" style="rounded=1;fillColor=#F0F7EE;strokeColor=#82b366;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="420" y="210" width="370" height="200" as="geometry"/>
+    </mxCell>
+    <mxCell id="flbl" value="FAST BRANCH (EEG → Motion/Dynamics)" style="text;fontSize=12;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#548235;" vertex="1" parent="1">
+      <mxGeometry x="435" y="214" width="340" height="18" as="geometry"/>
+    </mxCell>
+    <mxCell id="ffeat" value="fast_feat (B,226,2048)" style="text;fontSize=9;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#548235;" vertex="1" parent="1">
+      <mxGeometry x="440" y="255" width="160" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="hd" value="DynamicsHead&#xa;z_dyn (B,1152)" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="430" y="310" width="110" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="hm" value="MotionHead&#xa;z_mot (B,1152)" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="550" y="310" width="110" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="htc" value="TempCoherence&#xa;z_tc (B,1152)" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="670" y="310" width="110" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="e20" style="endArrow=classic;strokeColor=#82b366;exitX=0.3;exitY=1;entryX=0.5;entryY=0;" edge="1" source="eeg_enc" target="hd" parent="1"/>
+    <mxCell id="e21" style="endArrow=classic;strokeColor=#82b366;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="eeg_enc" target="hm" parent="1"/>
+    <mxCell id="e22" style="endArrow=classic;strokeColor=#82b366;exitX=0.7;exitY=1;entryX=0.5;entryY=0;" edge="1" source="eeg_enc" target="htc" parent="1"/>
+
+    <!-- ===== GATED FUSION ===== -->
+    <mxCell id="fusion" value="Cross-Modal Gated Fusion&#xa;4L Transformer + Sigmoid Gate → z_b (B,226,4096) + α_key, α_txt, α_mot, α_brain" style="rounded=1;fillColor=#e1d5e7;strokeColor=#7030A0;fontSize=12;fontStyle=1;whiteSpace=wrap;shadow=1;" vertex="1" parent="1">
+      <mxGeometry x="100" y="450" width="600" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="e30" value="slow_feat" style="endArrow=classic;strokeColor=#4472C4;strokeWidth=2;fontSize=10;fontColor=#4472C4;exitX=0.5;exitY=1;entryX=0.25;entryY=0;" edge="1" source="sbox" target="fusion" parent="1"/>
+    <mxCell id="e31" value="fast_feat" style="endArrow=classic;strokeColor=#548235;strokeWidth=2;fontSize=10;fontColor=#548235;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" edge="1" source="fbox" target="fusion" parent="1"/>
+
+    <!-- ===== MULTI-GUIDANCE ===== -->
+    <mxCell id="guide" value="Multi-Guidance Adapter&#xa;g_key=α·proj(z_key) + g_txt=α·proj(z_txt) + g_mot=α·proj([z_dyn,z_mot,z_tc]) + g_brain=α·z_b&#xa;→ context (B, 226, 4096)" style="rounded=1;fillColor=#fff2cc;strokeColor=#BF8F00;fontSize=11;fontStyle=1;whiteSpace=wrap;shadow=1;" vertex="1" parent="1">
+      <mxGeometry x="100" y="540" width="600" height="55" as="geometry"/>
+    </mxCell>
+    <mxCell id="e40" value="z_b + alphas" style="endArrow=classic;strokeColor=#7030A0;strokeWidth=2;fontSize=10;fontColor=#7030A0;" edge="1" source="fusion" target="guide" parent="1"/>
+    <!-- head→guidance dashed -->
+    <mxCell id="e41" style="endArrow=classic;strokeColor=#6c8ebf;dashed=1;exitX=0.5;exitY=1;entryX=0.1;entryY=0;" edge="1" source="hk" target="guide" parent="1"/>
+    <mxCell id="e42" style="endArrow=classic;strokeColor=#6c8ebf;dashed=1;exitX=0.5;exitY=1;entryX=0.22;entryY=0;" edge="1" source="ht" target="guide" parent="1"/>
+    <mxCell id="e43" style="endArrow=classic;strokeColor=#82b366;dashed=1;exitX=0.5;exitY=1;entryX=0.65;entryY=0;" edge="1" source="hd" target="guide" parent="1"/>
+    <mxCell id="e44" style="endArrow=classic;strokeColor=#82b366;dashed=1;exitX=0.5;exitY=1;entryX=0.78;entryY=0;" edge="1" source="hm" target="guide" parent="1"/>
+    <mxCell id="e45" style="endArrow=classic;strokeColor=#82b366;dashed=1;exitX=0.5;exitY=1;entryX=0.92;entryY=0;" edge="1" source="htc" target="guide" parent="1"/>
+
+    <!-- ===== DiT DECODER ===== -->
+    <mxCell id="dit" value="CogVideoX-5B DiT Decoder&#xa;42 Layers · 3072 hidden · 48 heads · LoRA r=128 · Cross-Attn on context" style="rounded=1;fillColor=#f8cecc;strokeColor=#C00000;fontSize=13;fontStyle=1;whiteSpace=wrap;shadow=1;" vertex="1" parent="1">
+      <mxGeometry x="150" y="640" width="500" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="e50" value="context (B,226,4096)" style="endArrow=classic;strokeColor=#BF8F00;strokeWidth=2;fontSize=10;fontColor=#BF8F00;" edge="1" source="guide" target="dit" parent="1"/>
+
+    <!-- ===== VAE + OUTPUT ===== -->
+    <mxCell id="vae" value="3D VAE Decode (frozen)" style="rounded=1;fillColor=#f5f5f5;strokeColor=#666;fontSize=12;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="250" y="730" width="300" height="35" as="geometry"/>
+    </mxCell>
+    <mxCell id="e60" style="endArrow=classic;strokeColor=#C00000;strokeWidth=2;" edge="1" source="dit" target="vae" parent="1"/>
+
+    <mxCell id="out" value="Reconstructed Video (B, 33, 3, 480, 720)" style="rounded=1;fillColor=#E2EFDA;strokeColor=#548235;fontSize=13;fontStyle=1;whiteSpace=wrap;shadow=1;" vertex="1" parent="1">
+      <mxGeometry x="220" y="800" width="360" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="e70" style="endArrow=classic;strokeColor=#666;strokeWidth=2;" edge="1" source="vae" target="out" parent="1"/>
+
+    <!-- ===== LEGEND ===== -->
+    <mxCell id="legbox" value="" style="rounded=1;fillColor=#FAFAFA;strokeColor=#CCC;" vertex="1" parent="1">
+      <mxGeometry x="580" y="710" width="200" height="130" as="geometry"/>
+    </mxCell>
+    <mxCell id="legt" value="Training Stages" style="text;fontSize=13;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+      <mxGeometry x="595" y="715" width="160" height="20" as="geometry"/>
+    </mxCell>
+    <mxCell id="ls1" value="● Stage I: L_align+L_slow+L_fast" style="text;fontSize=10;fillColor=none;strokeColor=none;fontColor=#4472C4;" vertex="1" parent="1">
+      <mxGeometry x="595" y="740" width="180" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="ls2" value="● Stage II: + L_guide" style="text;fontSize=10;fillColor=none;strokeColor=none;fontColor=#7030A0;" vertex="1" parent="1">
+      <mxGeometry x="595" y="762" width="180" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="ls3" value="● Stage III: + L_diff (full)" style="text;fontSize=10;fillColor=none;strokeColor=none;fontColor=#C00000;" vertex="1" parent="1">
+      <mxGeometry x="595" y="784" width="180" height="16" as="geometry"/>
+    </mxCell>
+    <mxCell id="lnote" value="All modules switchable via config" style="text;fontSize=9;fontStyle=2;fillColor=none;strokeColor=none;fontColor=#888;" vertex="1" parent="1">
+      <mxGeometry x="595" y="810" width="180" height="16" as="geometry"/>
+    </mxCell>
+
+  </root>
+</mxGraphModel>

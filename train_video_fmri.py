@@ -6,6 +6,7 @@ import torch.distributed
 from omegaconf import OmegaConf
 import imageio
 
+import patch_deepspeed_adam  # Patch FusedAdam for clusters without C++17 support
 import torch
 
 from sat import mpu

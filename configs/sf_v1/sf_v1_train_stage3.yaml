@@ -14,9 +14,8 @@ args:
   save_interval: 500
   eval_iters: 1
   split: 1,0,0
-
-train_data: [ __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_train_va.json ]
-valid_data: [ __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_test_va.json ]
+  train_data: [ __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_train_va.json ]
+  valid_data: [ __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_test_va.json ]
 
 data_config:
   target: data_video.BrainDataset
