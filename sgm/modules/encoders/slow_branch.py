@@ -63,19 +63,30 @@ class SceneTextHead(nn.Module):
 
 
 class StructureHead(nn.Module):
-    """Predict structure latent z_str from slow features (spatial-preserving)."""
-    def __init__(self, in_dim=2048, out_dim=2048):
+    """Predict structure latent z_str in VAE latent space from slow features.
+    Output shape matches CogVideoX VAE: (B, 16, 60, 90).
+    Uses mean pooling → MLP to predict flattened VAE latent.
+    """
+    def __init__(self, in_dim=2048, vae_channels=16, vae_h=60, vae_w=90):
         super().__init__()
+        self.vae_channels = vae_channels
+        self.vae_h = vae_h
+        self.vae_w = vae_w
+        out_dim = vae_channels * vae_h * vae_w  # 86400
+        # Two-stage projection to avoid huge single linear layer
         self.proj = nn.Sequential(
             nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, out_dim),
+            nn.Linear(in_dim, 4096),
             nn.GELU(),
-            nn.Linear(out_dim, out_dim),
+            nn.Linear(4096, out_dim),
         )
 
     def forward(self, x):
-        """x: (B, S, D) → z_str: (B, S, out_dim) spatial-preserving"""
-        return self.proj(x)
+        """x: (B, S, D) → z_str: (B, C, H, W) in VAE latent space"""
+        B = x.shape[0]
+        pooled = x.mean(dim=1)  # (B, D)
+        h = self.proj(pooled)  # (B, C*H*W)
+        return h.reshape(B, self.vae_channels, self.vae_h, self.vae_w)
 
 
 class SlowBranch(nn.Module):
@@ -114,7 +125,7 @@ class SlowBranch(nn.Module):
         if use_scene_text_head:
             self.scene_text_head = SceneTextHead(embed_dim, head_dim)
         if use_structure_head:
-            self.structure_head = StructureHead(embed_dim, embed_dim)
+            self.structure_head = StructureHead(in_dim=embed_dim)
 
     def forward(self, fmri, auditory_fmri=None):
         """

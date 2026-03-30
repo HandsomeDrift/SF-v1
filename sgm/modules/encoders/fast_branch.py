@@ -4,24 +4,29 @@ import torch.nn as nn
 
 
 class DynamicsHead(nn.Module):
-    """Predict dynamic pattern embedding z_dyn from fast features."""
-    def __init__(self, in_dim=2048, out_dim=1152):
+    """Predict dynamics score z_dyn (scalar) from fast features.
+    Supervised by OFS (optical flow score) — a single scalar per clip.
+    """
+    def __init__(self, in_dim=2048, out_dim=1):
         super().__init__()
         self.proj = nn.Sequential(
             nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, in_dim),
+            nn.Linear(in_dim, in_dim // 4),
             nn.GELU(),
-            nn.Linear(in_dim, out_dim),
+            nn.Linear(in_dim // 4, out_dim),
         )
 
     def forward(self, x):
-        """x: (B, S, D) → z_dyn: (B, out_dim) via mean pooling"""
-        return self.proj(x.mean(dim=1))
+        """x: (B, S, D) → z_dyn: (B,) scalar via mean pooling + regression"""
+        return self.proj(x.mean(dim=1)).squeeze(-1)
 
 
 class MotionHead(nn.Module):
-    """Predict motion latent z_mot from fast features."""
-    def __init__(self, in_dim=2048, out_dim=1152):
+    """Predict motion flow token z_mot from fast features.
+    Supervised by RAFT patch-pooled flow magnitude — (B, num_patches).
+    Default num_patches = (520//16) * (960//16) = 32*60 = 1920.
+    """
+    def __init__(self, in_dim=2048, out_dim=1920):
         super().__init__()
         self.proj = nn.Sequential(
             nn.LayerNorm(in_dim),
@@ -31,24 +36,26 @@ class MotionHead(nn.Module):
         )
 
     def forward(self, x):
-        """x: (B, S, D) → z_mot: (B, out_dim) via mean pooling"""
+        """x: (B, S, D) → z_mot: (B, num_patches) via mean pooling + MLP"""
         return self.proj(x.mean(dim=1))
 
 
 class TemporalCoherenceHead(nn.Module):
-    """Predict temporal coherence token z_tc from fast features."""
-    def __init__(self, in_dim=2048, out_dim=1152):
+    """Predict temporal coherence score z_tc (scalar) from fast features.
+    Supervised by OFS score — a single scalar per clip.
+    """
+    def __init__(self, in_dim=2048, out_dim=1):
         super().__init__()
         self.proj = nn.Sequential(
             nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, in_dim),
+            nn.Linear(in_dim, in_dim // 4),
             nn.GELU(),
-            nn.Linear(in_dim, out_dim),
+            nn.Linear(in_dim // 4, out_dim),
         )
 
     def forward(self, x):
-        """x: (B, S, D) → z_tc: (B, out_dim) via mean pooling"""
-        return self.proj(x.mean(dim=1))
+        """x: (B, S, D) → z_tc: (B,) scalar via mean pooling + regression"""
+        return self.proj(x.mean(dim=1)).squeeze(-1)
 
 
 class FastBranch(nn.Module):
@@ -61,10 +68,11 @@ class FastBranch(nn.Module):
         self,
         eeg_encoder,
         embed_dim=2048,
-        head_dim=1152,
+        head_dim=1152,  # unused, kept for API compat
         use_dynamics_head=True,
         use_motion_head=True,
         use_temporal_coherence_head=True,
+        motion_token_dim=1920,
     ):
         super().__init__()
         self.eeg_encoder = eeg_encoder
@@ -74,11 +82,11 @@ class FastBranch(nn.Module):
         self.use_temporal_coherence_head = use_temporal_coherence_head
 
         if use_dynamics_head:
-            self.dynamics_head = DynamicsHead(embed_dim, head_dim)
+            self.dynamics_head = DynamicsHead(embed_dim, out_dim=1)  # scalar OFS
         if use_motion_head:
-            self.motion_head = MotionHead(embed_dim, head_dim)
+            self.motion_head = MotionHead(embed_dim, out_dim=motion_token_dim)  # flow tokens
         if use_temporal_coherence_head:
-            self.tc_head = TemporalCoherenceHead(embed_dim, head_dim)
+            self.tc_head = TemporalCoherenceHead(embed_dim, out_dim=1)  # scalar OFS
 
     def forward(self, eeg):
         """

@@ -24,19 +24,21 @@ class MultiGuidanceAdapter(nn.Module):
         use_text_guidance=True,
         use_motion_guidance=True,
         use_brain_latent_guidance=True,
+        mot_input_dim=1922,
     ):
         super().__init__()
         self.use_keyframe_guidance = use_keyframe_guidance
         self.use_text_guidance = use_text_guidance
         self.use_motion_guidance = use_motion_guidance
         self.use_brain_latent_guidance = use_brain_latent_guidance
+        self.mot_input_dim = mot_input_dim
 
         if use_keyframe_guidance:
             self.key_proj = nn.Linear(head_dim, brain_dim)
         if use_text_guidance:
             self.txt_proj = nn.Linear(head_dim, brain_dim)
         if use_motion_guidance:
-            self.mot_proj = nn.Linear(head_dim * 3, brain_dim)
+            self.mot_proj = nn.Linear(mot_input_dim, brain_dim)
 
         self.out_proj = nn.Sequential(
             nn.LayerNorm(brain_dim),
@@ -64,13 +66,19 @@ class MultiGuidanceAdapter(nn.Module):
             context = context + alphas["alpha_txt"].unsqueeze(-1) * g_txt
 
         if self.use_motion_guidance:
-            mot_parts = []
-            for k in ["z_dyn", "z_mot", "z_tc"]:
-                if k in fast_out:
-                    mot_parts.append(fast_out[k])
-                else:
-                    mot_parts.append(torch.zeros_like(next(iter(fast_out.values()))))
-            mot_cat = torch.cat(mot_parts, dim=-1)
+            B = z_b.shape[0]
+            device, dtype = z_b.device, z_b.dtype
+            # z_dyn: (B,) or (B,1) scalar, z_mot: (B, mot_dim), z_tc: (B,) or (B,1) scalar
+            z_dyn = fast_out.get("z_dyn", torch.zeros(B, device=device, dtype=dtype))
+            mot_vec_dim = self.mot_input_dim - 2  # exclude z_dyn(1) and z_tc(1)
+            z_mot = fast_out.get("z_mot", torch.zeros(B, mot_vec_dim, device=device, dtype=dtype))
+            z_tc = fast_out.get("z_tc", torch.zeros(B, device=device, dtype=dtype))
+            # Ensure all are at least 1D
+            if z_dyn.dim() == 0: z_dyn = z_dyn.unsqueeze(0)
+            if z_dyn.dim() == 1: z_dyn = z_dyn.unsqueeze(-1)  # (B,1)
+            if z_tc.dim() == 0: z_tc = z_tc.unsqueeze(0)
+            if z_tc.dim() == 1: z_tc = z_tc.unsqueeze(-1)  # (B,1)
+            mot_cat = torch.cat([z_dyn, z_mot, z_tc], dim=-1)  # (B, mot_dim+2)
             g_mot = self.mot_proj(mot_cat).unsqueeze(1)
             context = context + alphas["alpha_mot"].unsqueeze(-1) * g_mot
 

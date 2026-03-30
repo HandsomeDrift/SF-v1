@@ -127,12 +127,13 @@ class SFBrainEmbedder(AbstractEmbModel):
         if use_multi_guidance and use_slow_branch and use_fast_branch:
             self.guidance_adapter = MultiGuidanceAdapter(
                 brain_dim=4096,
-                head_dim=clip_dim,
+                head_dim=clip_dim,  # for keyframe/text heads (1152)
                 num_spatial=num_spatial,
                 use_keyframe_guidance=use_keyframe_guidance,
                 use_text_guidance=use_text_guidance,
                 use_motion_guidance=use_motion_guidance,
                 use_brain_latent_guidance=use_brain_latent_guidance,
+                mot_input_dim=1922,  # z_dyn(1) + z_mot(1920) + z_tc(1)
             )
 
     def forward(self, batch, siglip_model):
