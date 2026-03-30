@@ -529,12 +529,31 @@ class BrainDataset(Dataset):
         )
         self.video_processor = SiglipVideoProcessor(image_processor)
 
-        # Auto-detect sf_targets_dir from dataset_root if not specified
+        # Auto-detect supervision cache (v2 sharded format preferred, v1 per-clip fallback)
         if not self.sf_targets_dir:
             dataset_root = get_paths().get("dataset_root", "")
-            candidate = os.path.join(dataset_root, "sf_targets")
-            if os.path.isdir(candidate):
-                self.sf_targets_dir = candidate
+            # v2: sharded .pt format
+            v2_candidate = os.path.join(dataset_root, "supervision_cache", "version_v1", "shards")
+            # v1: per-clip .npy format (legacy)
+            v1_candidate = os.path.join(dataset_root, "sf_targets")
+            if os.path.isdir(v2_candidate):
+                self.sf_targets_dir = v2_candidate
+                self._sf_cache_format = "v2_sharded"
+            elif os.path.isdir(v1_candidate):
+                self.sf_targets_dir = v1_candidate
+                self._sf_cache_format = "v1_per_clip"
+            else:
+                self._sf_cache_format = None
+
+        # Preload v2 shard index for fast lookup: clip_id → (shard_path, index_in_shard)
+        self._sf_shard_index = {}
+        if getattr(self, '_sf_cache_format', None) == "v2_sharded" and self.sf_targets_dir:
+            import glob as _glob
+            for shard_path in sorted(_glob.glob(os.path.join(self.sf_targets_dir, "*.pt"))):
+                shard_data = torch.load(shard_path, map_location="cpu", weights_only=False)
+                for i, cid in enumerate(shard_data.get("clip_ids", [])):
+                    self._sf_shard_index[cid] = (shard_path, i)
+                del shard_data  # free memory, will reload on access
 
 
     def __len__(self):
@@ -596,14 +615,43 @@ class BrainDataset(Dataset):
 
         # Load SF v1 supervision targets if available
         if self.sf_targets_dir:
-            clip_id = os.path.splitext(os.path.basename(video_path))[0]
-            target_dir = os.path.join(self.sf_targets_dir, clip_id)
+            clip_id_str = os.path.splitext(os.path.basename(video_path))[0]
+            clip_id_int = int(clip_id_str)
             sf_targets = {}
-            for tname in ["gt_keyframe_embed", "gt_text_embed", "gt_dynamics_embed",
-                          "gt_motion_embed", "gt_tc_embed"]:
-                tpath = os.path.join(target_dir, f"{tname}.npy")
-                if os.path.exists(tpath):
-                    sf_targets[tname] = torch.from_numpy(np.load(tpath))
+
+            fmt = getattr(self, '_sf_cache_format', None)
+            if fmt == "v2_sharded" and clip_id_int in self._sf_shard_index:
+                shard_path, idx = self._sf_shard_index[clip_id_int]
+                # Lazy-load shard (cached by DataLoader workers via OS page cache)
+                shard = torch.load(shard_path, map_location="cpu", weights_only=False)
+                for key in ["keyframe_img_emb", "scene_text_emb", "keyframe_vae_latent",
+                            "structure_latent", "flow_mag", "flow_token", "ofs_score", "dyn_label"]:
+                    if key in shard and isinstance(shard[key], torch.Tensor):
+                        if shard[key].dim() >= 1 and idx < shard[key].shape[0]:
+                            sf_targets[key] = shard[key][idx]
+                # Map to loss-expected names
+                if "keyframe_img_emb" in sf_targets:
+                    sf_targets["gt_keyframe_embed"] = sf_targets["keyframe_img_emb"]
+                if "scene_text_emb" in sf_targets:
+                    sf_targets["gt_text_embed"] = sf_targets["scene_text_emb"]
+                if "structure_latent" in sf_targets:
+                    sf_targets["gt_structure_embed"] = sf_targets["structure_latent"]
+                if "flow_token" in sf_targets:
+                    sf_targets["gt_motion_embed"] = sf_targets["flow_token"]
+                if "flow_mag" in sf_targets:
+                    sf_targets["gt_dynamics_embed"] = sf_targets["flow_mag"]
+                if "ofs_score" in sf_targets:
+                    sf_targets["gt_tc_embed"] = sf_targets["ofs_score"]
+
+            elif fmt == "v1_per_clip":
+                # Legacy per-clip .npy format
+                target_dir = os.path.join(self.sf_targets_dir, clip_id_str)
+                for tname in ["gt_keyframe_embed", "gt_text_embed", "gt_dynamics_embed",
+                              "gt_motion_embed", "gt_tc_embed"]:
+                    tpath = os.path.join(target_dir, f"{tname}.npy")
+                    if os.path.exists(tpath):
+                        sf_targets[tname] = torch.from_numpy(np.load(tpath))
+
             if sf_targets:
                 item["sf_targets"] = sf_targets
 
