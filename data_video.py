@@ -504,12 +504,14 @@ class SiglipVideoProcessor:
 from transformers import AutoProcessor
 
 class BrainDataset(Dataset):
-    def __init__(self, data_dir, video_size, fps, max_num_frames, skip_frms_num=3):
+    def __init__(self, data_dir, video_size, fps, max_num_frames, skip_frms_num=3,
+                 sf_targets_dir=""):
         super(BrainDataset, self).__init__()
         self.data_ann = json.load(open(data_dir, "r"))
         self.fmri_dir = ""
         self.eeg_dir = ""
         self.video_size = video_size
+        self.sf_targets_dir = sf_targets_dir
         decord.bridge.set_bridge("torch")
 
         from local_config import get_paths
@@ -526,6 +528,13 @@ class BrainDataset(Dataset):
             image_std=[0.5, 0.5, 0.5],
         )
         self.video_processor = SiglipVideoProcessor(image_processor)
+
+        # Auto-detect sf_targets_dir from dataset_root if not specified
+        if not self.sf_targets_dir:
+            dataset_root = get_paths().get("dataset_root", "")
+            candidate = os.path.join(dataset_root, "sf_targets")
+            if os.path.isdir(candidate):
+                self.sf_targets_dir = candidate
 
 
     def __len__(self):
@@ -584,6 +593,20 @@ class BrainDataset(Dataset):
             "fps": 8,
             "video_path": video_path,
         }
+
+        # Load SF v1 supervision targets if available
+        if self.sf_targets_dir:
+            clip_id = os.path.splitext(os.path.basename(video_path))[0]
+            target_dir = os.path.join(self.sf_targets_dir, clip_id)
+            sf_targets = {}
+            for tname in ["gt_keyframe_embed", "gt_text_embed", "gt_dynamics_embed",
+                          "gt_motion_embed", "gt_tc_embed"]:
+                tpath = os.path.join(target_dir, f"{tname}.npy")
+                if os.path.exists(tpath):
+                    sf_targets[tname] = torch.from_numpy(np.load(tpath))
+            if sf_targets:
+                item["sf_targets"] = sf_targets
+
         return item
 
     def __getitem__(self, index):
