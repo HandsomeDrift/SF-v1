@@ -399,3 +399,7 @@ class FrozenT5Embedder(AbstractEmbModel):
     def encode(self, text):
         return self(text)
 
+
+# SF v1 embedder — imported here so GeneralConditioner can instantiate it via config
+from sgm.modules.encoders.sf_embedder import SFBrainEmbedder  # noqa: F401
+

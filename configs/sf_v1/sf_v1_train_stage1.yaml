@@ -1,0 +1,52 @@
+# Stage I: Branch Pretraining — L_align + L_slow + L_fast
+# Override training_stage in the model config
+model:
+  loss_fn_config:
+    params:
+      training_stage: branch_pretrain
+
+args:
+  experiment_name: sf_v1_stage1_sub05
+  mode: finetune
+  load: __LOCAL_CONFIG_TRANSFORMER__
+  no_load_rng: True
+  train_iters: 5000
+  eval_interval: 200
+  save_interval: 500
+  eval_iters: 1
+  split: 1,0,0
+
+train_data: [ __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_train_va.json ]
+valid_data: [ __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_test_va.json ]
+
+data_config:
+  target: data_video.BrainDataset
+  params:
+    video_size: [480, 720]
+    fps: 8
+    max_num_frames: 33
+
+deepspeed:
+  train_micro_batch_size_per_gpu: 1
+  gradient_accumulation_steps: 4
+  gradient_clipping: 0.1
+  steps_per_print: 10
+  wall_clock_breakdown: false
+  zero_optimization:
+    stage: 2
+    cpu_offload: false
+    contiguous_gradients: true
+    overlap_comm: true
+  bf16:
+    enabled: true
+  fp16:
+    enabled: false
+  optimizer:
+    type: sat.ops.FusedEmaAdam
+    params:
+      lr: 0.0001
+      betas:
+        - 0.9
+        - 0.95
+      eps: 1.e-8
+      weight_decay: 1.e-4

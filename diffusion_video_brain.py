@@ -117,23 +117,30 @@ class SATVideoDiffusionEngineBrain(nn.Module):
                     if prefix in n:
                         flag = False
                         break
-                if "fmri_encoder" in n: 
+                if "fmri_encoder" in n:
                     flag = False
-                if "eeg_encoder" in n: 
+                if "eeg_encoder" in n:
                     flag = False
-                if "clip" in n: 
+                if "clip" in n:
                     flag = False
+                # SF v1: enable training for new modules
+                sf_trainable_keys = [
+                    "slow_branch", "fast_branch", "gated_fusion",
+                    "guidance_adapter", "fmri_eeg_linear",
+                    "align_loss", "slow_loss", "fast_loss", "guide_loss",
+                ]
+                for key in sf_trainable_keys:
+                    if key in n:
+                        flag = False
+                        break
                 if flag:
                     p.requires_grad_(False)
                 else:
                     total_trainable += p.numel()
         # for n, p in self.conditioner.named_parameters():print(n,p.requires_grad)
         print_rank0("***** Total trainable parameters: " + str(total_trainable) + " *****")
-        # import pdb;pdb.set_trace()
 
     def reinit(self, parent_model=None):
-        # reload the initial params from previous trained modules
-        # you can also get access to other mixins through parent_model.get_mixin().
         pass
 
     def _init_first_stage(self, config):
@@ -464,10 +471,22 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
                     if prefix in n:
                         flag = False
                         break
-                if "fmri_encoder" in n: 
+                if "fmri_encoder" in n:
                     flag = False
-                if "clip" in n: 
+                if "eeg_encoder" in n:
                     flag = False
+                if "clip" in n:
+                    flag = False
+                # SF v1: enable training for new modules
+                sf_trainable_keys = [
+                    "slow_branch", "fast_branch", "gated_fusion",
+                    "guidance_adapter", "fmri_eeg_linear",
+                    "align_loss", "slow_loss", "fast_loss", "guide_loss",
+                ]
+                for key in sf_trainable_keys:
+                    if key in n:
+                        flag = False
+                        break
                 if flag:
                     p.requires_grad_(False)
                 else:
