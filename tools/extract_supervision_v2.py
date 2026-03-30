@@ -178,8 +178,8 @@ def extract_vae_shard(clip_list, vae_model, scale_factor, args):
 
         kf = kf.to(args.device)
         with torch.amp.autocast("cuda"):
-            kf_posterior = vae_model.encode(kf)
-            kf_latent = kf_posterior.sample() * scale_factor  # (1, C, 1, h, w)
+            kf_latent = vae_model.encode(kf)  # returns tensor directly, already sampled
+            kf_latent = kf_latent * scale_factor  # (1, C, 1, h, w)
         kf_latent = kf_latent.cpu().squeeze(0).squeeze(1)  # (C, h, w)
 
         # Structure latent = same as keyframe VAE latent (spec section 2.3)
@@ -287,14 +287,13 @@ def load_siglip(device):
 
 def load_vae(device):
     from local_config import get_paths
-    from vae_modules.autoencoder import VideoAutoencoderInferenceWrapper
     from omegaconf import OmegaConf
-    import yaml
+
+    from vae_modules.autoencoder import VideoAutoencoderInferenceWrapper
 
     vae_path = get_paths()["vae"]
-    # Load VAE using the same config as training
     vae_config = OmegaConf.create({
-        "cp_size": 1,
+        "cp_size": 1,  # single-process context parallel
         "ckpt_path": vae_path,
         "ignore_keys": ["loss"],
         "loss_config": {"target": "torch.nn.Identity"},
@@ -390,6 +389,31 @@ def save_metadata(args, total_clips, shard_count):
 def main():
     args = parse_args()
     os.makedirs(os.path.join(args.output_dir, "shards"), exist_ok=True)
+
+    # Initialize context parallel for standalone VAE use
+    if args.phase in ("vae", "all"):
+        # Init torch.distributed (needed by some VAE internals)
+        if not torch.distributed.is_initialized():
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+            os.environ["MASTER_PORT"] = str(29500 + os.getpid() % 1000)
+            os.environ["RANK"] = "0"
+            os.environ["WORLD_SIZE"] = "1"
+            torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1)
+
+        # Initialize context parallel in BOTH modules that define it
+        cp_group = torch.distributed.new_group([0])
+
+        import vae_modules.utils as _vae_utils
+        if not _vae_utils.is_context_parallel_initialized():
+            _vae_utils._CONTEXT_PARALLEL_SIZE = 1
+            _vae_utils._CONTEXT_PARALLEL_GROUP = cp_group
+
+        import sgm.util as _sgm_util
+        if not _sgm_util.is_context_parallel_initialized():
+            _sgm_util._CONTEXT_PARALLEL_SIZE = 1
+            _sgm_util._CONTEXT_PARALLEL_GROUP = cp_group
+
+        print("Initialized context parallel for standalone VAE")
 
     # Discover all clips
     all_clips = get_all_clip_paths(args.dataset_root)
