@@ -133,9 +133,25 @@ def broad_cast_batch(batch):
         batch["fps"] = torch.zeros(fps_shape, device="cuda", dtype=torch.long)
         batch["num_frames"] = torch.zeros(num_frames_shape, device="cuda", dtype=torch.long)
 
+    batch["mp4"] = batch["mp4"].contiguous()
     torch.distributed.broadcast(batch["mp4"], src=src, group=mpu.get_model_parallel_group())
     torch.distributed.broadcast(batch["fps"], src=src, group=mpu.get_model_parallel_group())
     torch.distributed.broadcast(batch["num_frames"], src=src, group=mpu.get_model_parallel_group())
+
+    # Broadcast eeg tensor
+    eeg_meta = [batch.get("eeg") is not None, batch["eeg"].shape if batch.get("eeg") is not None else None]
+    torch.distributed.broadcast_object_list(eeg_meta, src=src, group=mpu.get_model_parallel_group())
+    if eeg_meta[0]:
+        if mpu.get_model_parallel_rank() != 0:
+            batch["eeg"] = torch.zeros(eeg_meta[1], device="cuda")
+        batch["eeg"] = batch["eeg"].contiguous()
+        torch.distributed.broadcast(batch["eeg"], src=src, group=mpu.get_model_parallel_group())
+
+    # Broadcast sf_targets via object_list (dict of CPU tensors, small)
+    sf = [batch.get("sf_targets", {})]
+    torch.distributed.broadcast_object_list(sf, src=src, group=mpu.get_model_parallel_group())
+    batch["sf_targets"] = sf[0]
+
     return batch
 
 
@@ -187,7 +203,8 @@ def forward_step(data_iterator, model, args, timers, data_class=None):
                 os.makedirs(args.save, exist_ok=True)
                 OmegaConf.save(config=config, f=os.path.join(args.save, "training_config.yaml"))
     else:
-        batch = {"mp4": None, "fps": None, "num_frames": None, "fmri": None}
+        batch = {"mp4": None, "fps": None, "num_frames": None, "fmri": None,
+                 "eeg": None, "text": None, "video": None, "sf_targets": {}}
 
     batch["global_step"] = args.iteration
 

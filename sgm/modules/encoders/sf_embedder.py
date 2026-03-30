@@ -138,7 +138,7 @@ class SFBrainEmbedder(AbstractEmbModel):
 
     def forward(self, batch, siglip_model):
         self.dtype = self.v_clip_linear.weight.dtype
-        clip_loss = 0.0
+        clip_loss = torch.tensor(0.0, device=self.v_clip_linear.weight.device, dtype=self.dtype)
 
         # CLIP loss (training only)
         if self.mode == "train":

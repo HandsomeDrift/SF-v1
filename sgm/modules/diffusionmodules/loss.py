@@ -229,36 +229,40 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
         slow_out = getattr(embedder, '_last_slow_out', {})
         fast_out = getattr(embedder, '_last_fast_out', {})
 
-        # Compute SF auxiliary losses (always)
-        sf_total = torch.tensor(0.0, device=input.device)
-        sf_log = {}
+        # Move sf_targets to device and match dtype (bf16-safe)
+        targets = batch.get("sf_targets", {})
+        for k, v in targets.items():
+            if isinstance(v, torch.Tensor):
+                if v.is_floating_point():
+                    targets[k] = v.to(device=input.device, dtype=input.dtype)
+                else:
+                    targets[k] = v.to(device=input.device)
 
-        # Alignment loss (fmri_cls / eeg_cls exist in both SF and baseline modes)
+        # Initialize loss accumulator matching input dtype (bf16)
+        sf_total = input.new_tensor(0.0)
+
+        # Alignment loss
         if "fmri_cls" in slow_out and "eeg_cls" in fast_out:
-            l_align, d_align = self.align_loss(slow_out, fast_out)
+            l_align, _ = self.align_loss(slow_out, fast_out)
             sf_total = sf_total + l_align
-            sf_log.update(d_align)
 
         # Slow branch loss
-        if "z_key" in slow_out:
-            targets = batch.get("sf_targets", {})
-            l_slow, d_slow = self.slow_loss(slow_out, targets)
+        if "z_key" in slow_out and targets:
+            l_slow, _ = self.slow_loss(slow_out, targets)
             sf_total = sf_total + l_slow
-            sf_log.update(d_slow)
 
         # Fast branch loss
-        if "z_dyn" in fast_out:
-            targets = batch.get("sf_targets", {})
-            l_fast, d_fast = self.fast_loss(fast_out, targets)
+        if "z_dyn" in fast_out and targets:
+            l_fast, _ = self.fast_loss(fast_out, targets)
             sf_total = sf_total + l_fast
-            sf_log.update(d_fast)
 
-        # Guidance loss (stage 2+)
+        # Guidance loss (stage 2+): pass video/text embeds from targets
         if self.training_stage in ("fusion", "joint"):
-            if "z_key" in slow_out or "z_mot" in fast_out:
-                l_guide, d_guide = self.guide_loss(slow_out, fast_out)
+            video_embed = targets.get("gt_keyframe_embed", None)
+            text_embed = targets.get("gt_text_embed", None)
+            if "z_key" in slow_out and (video_embed is not None or text_embed is not None):
+                l_guide, _ = self.guide_loss(slow_out, fast_out, video_embed, text_embed)
                 sf_total = sf_total + l_guide
-                sf_log.update(d_guide)
 
         # Diffusion loss (stage 3 only)
         if self.training_stage == "joint":
@@ -293,14 +297,15 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             w = append_dims(1 / (1 - alphas_cumprod_sqrt**2), input.ndim)
 
             if self.min_snr_value is not None:
-                w = min(w, self.min_snr_value)
+                w = torch.clamp(w, max=self.min_snr_value)
 
             diff_loss = self.get_loss(model_output, input, w)
 
-            # Normalize SF loss to same scale as diffusion loss
-            if sf_total.item() > 0:
-                sf_total = sf_total / sf_total.item() * diff_loss.item()
-            return diff_loss + sf_total
+            # Normalize SF loss to same scale as diffusion loss (detached scaling)
+            if sf_total.requires_grad:
+                scale = diff_loss.detach() / (sf_total.detach() + 1e-8)
+                sf_total = sf_total * scale
+            return diff_loss + sf_total.to(diff_loss.dtype)
 
         # For branch_pretrain / fusion stages: return SF loss only (no diffusion)
-        return sf_total
+        return sf_total.to(input.dtype)

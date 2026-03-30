@@ -22,7 +22,7 @@ args:
   train_data: [ "__LOCAL_CONFIG_DATASET_ROOT__/sub-0005_train_va.json" ]
   valid_data: [ "__LOCAL_CONFIG_DATASET_ROOT__/sub-0005_test_va.json" ]
   split: 1,0,0
-  num_workers: 8
+  num_workers: 4
   force_train: True
   only_log_video_latents: False
 
