@@ -250,8 +250,9 @@ def extract_raft_shard(clip_list, raft_model, args):
         patches = mean_flow_map[:nh*ph, :nw*pw].reshape(nh, ph, nw, pw).mean(dim=(1, 3))  # (nh, nw)
         flow_token = patches.flatten()  # (nh*nw,)
 
-        # ofs_score: optical flow score = mean flow magnitude (scalar)
-        ofs = flow_mag_mean
+        # ofs_score: optical flow stability = std of per-pair flow magnitudes
+        # High std → temporally unstable motion; Low std → smooth/consistent motion
+        ofs = per_pair_mag.std() if len(per_pair_mag) > 1 else torch.tensor(0.0)
 
         flow_mags.append(flow_mag_mean)
         flow_tokens.append(flow_token)

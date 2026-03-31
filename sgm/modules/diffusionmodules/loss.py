@@ -243,7 +243,9 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
 
         # Alignment loss
         if "fmri_cls" in slow_out and "eeg_cls" in fast_out:
-            l_align, _ = self.align_loss(slow_out, fast_out)
+            video_embed = targets.get("gt_keyframe_embed", None)
+            text_embed = targets.get("gt_text_embed", None)
+            l_align, _ = self.align_loss(slow_out, fast_out, video_embed, text_embed)
             sf_total = sf_total + l_align
 
         # Slow branch loss
@@ -305,7 +307,32 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             if sf_total.requires_grad:
                 scale = diff_loss.detach() / (sf_total.detach() + 1e-8)
                 sf_total = sf_total * scale
+
+            # Store loss breakdown for logging
+            self._last_loss_breakdown = {}
+            if 'l_align' in locals():
+                self._last_loss_breakdown["sf/L_align"] = l_align.detach().float().item()
+            if 'l_slow' in locals():
+                self._last_loss_breakdown["sf/L_slow"] = l_slow.detach().float().item()
+            if 'l_fast' in locals():
+                self._last_loss_breakdown["sf/L_fast"] = l_fast.detach().float().item()
+            if 'l_guide' in locals():
+                self._last_loss_breakdown["sf/L_guide"] = l_guide.detach().float().item()
+            self._last_loss_breakdown["sf/total"] = sf_total.detach().float().item()
+
             return diff_loss + sf_total.to(diff_loss.dtype)
+
+        # Store loss breakdown for logging
+        self._last_loss_breakdown = {}
+        if 'l_align' in locals():
+            self._last_loss_breakdown["sf/L_align"] = l_align.detach().float().item()
+        if 'l_slow' in locals():
+            self._last_loss_breakdown["sf/L_slow"] = l_slow.detach().float().item()
+        if 'l_fast' in locals():
+            self._last_loss_breakdown["sf/L_fast"] = l_fast.detach().float().item()
+        if 'l_guide' in locals():
+            self._last_loss_breakdown["sf/L_guide"] = l_guide.detach().float().item()
+        self._last_loss_breakdown["sf/total"] = sf_total.detach().float().item()
 
         # For branch_pretrain / fusion stages: return SF loss only (no diffusion)
         return sf_total.to(input.dtype)

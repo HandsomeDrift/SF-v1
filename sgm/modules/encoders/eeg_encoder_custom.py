@@ -148,11 +148,10 @@ class CustomEEGTransformer(nn.Module):
         x = x + self.pos_embed
         
         eeg_cls = None
+        cls_layer = len(self.encoder_layers) - 1  # extract CLS from last layer
         for layer_idx, layer in enumerate(self.encoder_layers):
             x = layer(x)
-            
-            # 在第11层提取CLS Token特征（因为现在只有12层）
-            if layer_idx == 11:  # 最后一层
+            if layer_idx == cls_layer:
                 eeg_cls = x[:, 0, :]  # (B, 2048)
         
         x = self.out_proj(x)[:, 1:]  # (B, 226, 2048)

@@ -126,7 +126,8 @@ class SATVideoDiffusionEngineBrain(nn.Module):
                 # SF v1: enable training for new modules
                 sf_trainable_keys = [
                     "slow_branch", "fast_branch", "gated_fusion",
-                    "guidance_adapter", "fmri_eeg_linear",
+                    "guidance_adapter", "auditory_encoder",
+                    "fmri_eeg_linear",
                     "align_loss", "slow_loss", "fast_loss", "guide_loss",
                 ]
                 for key in sf_trainable_keys:
@@ -192,6 +193,11 @@ class SATVideoDiffusionEngineBrain(nn.Module):
         # gc.collect()
         # torch.cuda.empty_cache()
         loss, loss_dict = self(x, batch)
+        # Add SF loss breakdown to loss_dict for logging
+        if hasattr(self.loss_fn, '_last_loss_breakdown'):
+            for k, v in self.loss_fn._last_loss_breakdown.items():
+                loss_dict[k] = torch.tensor(v, dtype=torch.float32, device=loss.device)
+
         return loss, loss_dict
 
     def get_input(self, batch):
@@ -480,7 +486,8 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
                 # SF v1: enable training for new modules
                 sf_trainable_keys = [
                     "slow_branch", "fast_branch", "gated_fusion",
-                    "guidance_adapter", "fmri_eeg_linear",
+                    "guidance_adapter", "auditory_encoder",
+                    "fmri_eeg_linear",
                     "align_loss", "slow_loss", "fast_loss", "guide_loss",
                 ]
                 for key in sf_trainable_keys:
@@ -548,6 +555,11 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
         # gc.collect()
         # torch.cuda.empty_cache()
         loss, loss_dict = self(x, batch)
+        # Add SF loss breakdown to loss_dict for logging
+        if hasattr(self.loss_fn, '_last_loss_breakdown'):
+            for k, v in self.loss_fn._last_loss_breakdown.items():
+                loss_dict[k] = torch.tensor(v, dtype=torch.float32, device=loss.device)
+
         return loss, loss_dict
 
     def get_input(self, batch):

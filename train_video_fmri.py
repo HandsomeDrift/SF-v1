@@ -147,6 +147,16 @@ def broad_cast_batch(batch):
         batch["eeg"] = batch["eeg"].contiguous()
         torch.distributed.broadcast(batch["eeg"], src=src, group=mpu.get_model_parallel_group())
 
+    # Broadcast fmri_auditory tensor
+    fmri_aud_meta = [batch.get("fmri_auditory") is not None,
+                     batch["fmri_auditory"].shape if batch.get("fmri_auditory") is not None else None]
+    torch.distributed.broadcast_object_list(fmri_aud_meta, src=src, group=mpu.get_model_parallel_group())
+    if fmri_aud_meta[0]:
+        if mpu.get_model_parallel_rank() != 0:
+            batch["fmri_auditory"] = torch.zeros(fmri_aud_meta[1], device="cuda")
+        batch["fmri_auditory"] = batch["fmri_auditory"].contiguous()
+        torch.distributed.broadcast(batch["fmri_auditory"], src=src, group=mpu.get_model_parallel_group())
+
     # Broadcast sf_targets via object_list (dict of CPU tensors, small)
     sf = [batch.get("sf_targets", {})]
     torch.distributed.broadcast_object_list(sf, src=src, group=mpu.get_model_parallel_group())
@@ -174,7 +184,8 @@ def forward_step_eval(data_iterator, model, args, timers, only_log_video_latents
             if isinstance(batch_video[key], torch.Tensor):
                 batch_video[key] = batch_video[key].cuda()
     else:
-        batch_video = {"mp4": None, "fps": None, "num_frames": None, "fmri": None}
+        batch_video = {"mp4": None, "fps": None, "num_frames": None, "fmri": None,
+                       "fmri_auditory": None, "eeg": None, "text": None, "video": None, "sf_targets": {}}
     broad_cast_batch(batch_video)
     if mpu.get_data_parallel_rank() == 0:
         log_video(batch_video, model, args, only_log_video_latents=only_log_video_latents)
@@ -204,7 +215,7 @@ def forward_step(data_iterator, model, args, timers, data_class=None):
                 OmegaConf.save(config=config, f=os.path.join(args.save, "training_config.yaml"))
     else:
         batch = {"mp4": None, "fps": None, "num_frames": None, "fmri": None,
-                 "eeg": None, "text": None, "video": None, "sf_targets": {}}
+                 "fmri_auditory": None, "eeg": None, "text": None, "video": None, "sf_targets": {}}
 
     batch["global_step"] = args.iteration
 

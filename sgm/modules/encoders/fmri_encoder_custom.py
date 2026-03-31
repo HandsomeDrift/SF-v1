@@ -110,9 +110,10 @@ class CustomTransformerBranch(nn.Module):
         
     def forward(self, x, mask=None):
         cls_token = None
+        cls_layer = len(self.layers) - 1  # extract CLS from last layer
         for i, layer in enumerate(self.layers):
             x = layer(x, mask)
-            if i == 11:  # 11th layer (index 11) output branch
+            if i == cls_layer:
                 cls_token = x[:, 0, :]
         return x, cls_token
 

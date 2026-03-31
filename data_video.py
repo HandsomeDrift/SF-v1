@@ -565,6 +565,27 @@ class BrainDataset(Dataset):
                 del shard_data
             print(f"[BrainDataset] Preloaded {len(self._sf_preloaded)} supervision targets into memory")
 
+        # Preload v1 per-clip sf_targets (directory-based: sf_targets/{clip_id}/{target}.npy)
+        if getattr(self, '_sf_cache_format', None) == "v1_per_clip" and self.sf_targets_dir:
+            clip_dirs = sorted([d for d in os.listdir(self.sf_targets_dir)
+                                if os.path.isdir(os.path.join(self.sf_targets_dir, d))])
+            for clip_dir in clip_dirs:
+                try:
+                    clip_id = int(clip_dir)
+                except ValueError:
+                    continue
+                clip_path = os.path.join(self.sf_targets_dir, clip_dir)
+                entry = {}
+                for fname in os.listdir(clip_path):
+                    fpath = os.path.join(clip_path, fname)
+                    key = os.path.splitext(fname)[0]
+                    if fname.endswith(".npy"):
+                        entry[key] = torch.from_numpy(np.load(fpath))
+                    elif fname.endswith(".pt"):
+                        entry[key] = torch.load(fpath, map_location="cpu", weights_only=False)
+                self._sf_preloaded[clip_id] = entry
+            print(f"[BrainDataset] Preloaded {len(self._sf_preloaded)} v1 per-clip targets")
+
 
     def __len__(self):
         return len(self.data_ann)
@@ -578,6 +599,9 @@ class BrainDataset(Dataset):
             fmri = torch.from_numpy(np.load(fmri_path[i])).unsqueeze(0)
             fmri_data_list.append(fmri)
         fmri = torch.cat(fmri_data_list, dim=0)
+        # Split visual (8405) and auditory (10541) ROIs
+        fmri_auditory = fmri[:, 8405:]    # (5, 10541)
+        fmri = fmri[:, :8405]             # (5, 8405) — overwrites fmri to visual-only
         text =  data_item['text']
        
         eeg_path = data_item["eeg"]
@@ -616,6 +640,7 @@ class BrainDataset(Dataset):
             "text": caption["input_ids"][:,:64],
             "video": video["pixel_values"],
             "fmri": fmri,
+            "fmri_auditory": fmri_auditory,
             "eeg": eeg,
             # "txt": caption,
             "num_frames": 33,
@@ -628,17 +653,33 @@ class BrainDataset(Dataset):
         sf_targets = {}
         if clip_id_int in self._sf_preloaded:
             sf_targets = dict(self._sf_preloaded[clip_id_int])  # shallow copy
-            _name_map = {
-                "keyframe_img_emb": "gt_keyframe_embed",
-                "scene_text_emb": "gt_text_embed",
-                "structure_latent": "gt_structure_embed",
-                "flow_token": "gt_motion_embed",
-                "flow_mag": "gt_dynamics_embed",
-                "ofs_score": "gt_tc_embed",
-            }
-            for src, dst in _name_map.items():
-                if src in sf_targets:
-                    sf_targets[dst] = sf_targets[src]
+            # v2 sharded format uses different key names, rename to standard
+            if getattr(self, '_sf_cache_format', None) == "v2_sharded":
+                _name_map = {
+                    "keyframe_img_emb": "gt_keyframe_embed",
+                    "scene_text_emb": "gt_text_embed",
+                    "structure_latent": "gt_structure_embed",
+                    "flow_token": "gt_motion_embed",
+                    "flow_mag": "gt_dynamics_embed",
+                    "ofs_score": "gt_tc_embed",
+                }
+                for src, dst in _name_map.items():
+                    if src in sf_targets:
+                        sf_targets[dst] = sf_targets.pop(src)
+        # Normalize fast branch targets to prevent loss scale explosion
+        # flow_token (gt_motion_embed): L2-normalize to unit norm
+        if "gt_motion_embed" in sf_targets:
+            t = sf_targets["gt_motion_embed"].float()
+            norm = t.norm() + 1e-8
+            sf_targets["gt_motion_embed"] = (t / norm)
+        # flow_mag (gt_dynamics_embed): z-score normalize (precomputed: mean=182.73, std=124.88)
+        if "gt_dynamics_embed" in sf_targets:
+            t = sf_targets["gt_dynamics_embed"].float()
+            sf_targets["gt_dynamics_embed"] = (t - 182.73) / (124.88 + 1e-8)
+        # ofs_score == flow_mag (extraction bug), disable by removing
+        if "gt_tc_embed" in sf_targets:
+            del sf_targets["gt_tc_embed"]
+
         # Always include sf_targets (empty dict is fine, ensures consistent collation)
         item["sf_targets"] = sf_targets
 

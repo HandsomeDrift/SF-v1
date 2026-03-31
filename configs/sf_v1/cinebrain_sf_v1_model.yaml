@@ -79,7 +79,7 @@ model:
           ucg_rate: 0.1
           target: sgm.modules.encoders.sf_embedder.SFBrainEmbedder
           params:
-            seq_len: 18946
+            seq_len: 8405
             num_spatial: 226
             fmri_num_layers: 12
             eeg_num_layers: 12
@@ -90,14 +90,14 @@ model:
             use_gated_fusion: true
             use_multi_guidance: true
             # Slow branch
-            use_auditory: false
+            use_auditory: true
             use_keyframe_head: true
             use_scene_text_head: true
             use_structure_head: true
             # Fast branch
             use_dynamics_head: true
             use_motion_head: true
-            use_temporal_coherence_head: true
+            use_temporal_coherence_head: true  # no direct supervision (extraction bug), learns implicitly via guidance
             # Fusion
             fusion_hidden_dim: 2048
             fusion_num_layers: 4

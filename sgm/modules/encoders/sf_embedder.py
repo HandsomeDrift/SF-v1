@@ -79,6 +79,13 @@ class SFBrainEmbedder(AbstractEmbModel):
             clip_dim=clip_dim, num_layers=eeg_num_layers, num_spatial=num_spatial
         )
 
+        # Auditory fMRI encoder (lighter: half the layers of visual encoder)
+        if use_auditory:
+            self.auditory_encoder = CustomfMRITransformer(
+                clip_dim=clip_dim, in_channels=in_channels,
+                seq_len=10541, num_layers=fmri_num_layers // 2, num_spatial=num_spatial
+            )
+
         # CLIP alignment (same as BrainmbedderCLIP)
         self.v_clip_linear = nn.Conv1d(33, 1, 1)
         self.fmri_v_clip_logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -94,6 +101,7 @@ class SFBrainEmbedder(AbstractEmbModel):
         if use_slow_branch:
             self.slow_branch = SlowBranch(
                 fmri_encoder=self.fmri_encoder,
+                auditory_encoder=self.auditory_encoder if use_auditory else None,
                 embed_dim=embed_dim,
                 head_dim=clip_dim,
                 use_auditory=use_auditory,
@@ -149,7 +157,10 @@ class SFBrainEmbedder(AbstractEmbModel):
 
         # --- SF v1 path ---
         if self.use_slow_branch and self.use_fast_branch:
-            slow_out = self.slow_branch(fmri)
+            auditory_fmri = batch.get("fmri_auditory")
+            if auditory_fmri is not None:
+                auditory_fmri = auditory_fmri.to(self.dtype)
+            slow_out = self.slow_branch(fmri, auditory_fmri=auditory_fmri)
             fast_out = self.fast_branch(eeg)
 
             if self.use_gated_fusion:
