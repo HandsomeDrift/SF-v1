@@ -49,6 +49,10 @@ class SFBrainEmbedder(AbstractEmbModel):
         use_dynamics_head=True,
         use_motion_head=True,
         use_temporal_coherence_head=True,
+        use_direction_head=True,
+        motion_pca_dim=128,
+        num_dyn_classes=3,
+        num_dir_classes=8,
         # Fusion config
         fusion_hidden_dim=2048,
         fusion_num_layers=4,
@@ -118,6 +122,10 @@ class SFBrainEmbedder(AbstractEmbModel):
                 use_dynamics_head=use_dynamics_head,
                 use_motion_head=use_motion_head,
                 use_temporal_coherence_head=use_temporal_coherence_head,
+                use_direction_head=use_direction_head,
+                motion_pca_dim=motion_pca_dim,
+                num_dyn_classes=num_dyn_classes,
+                num_dir_classes=num_dir_classes,
             )
 
         if use_gated_fusion and use_slow_branch and use_fast_branch:
@@ -141,7 +149,7 @@ class SFBrainEmbedder(AbstractEmbModel):
                 use_text_guidance=use_text_guidance,
                 use_motion_guidance=use_motion_guidance,
                 use_brain_latent_guidance=use_brain_latent_guidance,
-                mot_input_dim=1922,  # z_dyn(1) + z_mot(1920) + z_tc(1)
+                mot_input_dim=140,  # 3(dyn) + 128(mot) + 1(tc) + 8(dir)
             )
 
     def forward(self, batch, siglip_model):

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import TransformerEncoderLayer
+from sgm.modules.encoders.temporal_conv import MultiScaleTCN
 
 
 class MultiHeadAttention(nn.Module):
@@ -132,6 +133,9 @@ class CustomEEGTransformer(nn.Module):
         
         self.out_proj = nn.Linear(d_model, out_dim)
         self.cls_proj = nn.Linear(d_model, clip_dim)
+
+        # Multi-scale temporal convolution (before transformer)
+        self.tcn = MultiScaleTCN(dim=d_model)
     
     def forward(self, x):
         # 输入形状: (B, 5, 64, 800)
@@ -146,7 +150,10 @@ class CustomEEGTransformer(nn.Module):
         
         # 添加位置编码
         x = x + self.pos_embed
-        
+
+        # Apply multi-scale temporal convolution
+        x = self.tcn(x)
+
         eeg_cls = None
         cls_layer = len(self.encoder_layers) - 1  # extract CLS from last layer
         for layer_idx, layer in enumerate(self.encoder_layers):

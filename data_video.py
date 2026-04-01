@@ -551,7 +551,8 @@ class BrainDataset(Dataset):
         if getattr(self, '_sf_cache_format', None) == "v2_sharded" and self.sf_targets_dir:
             import glob as _glob
             target_keys = ["keyframe_img_emb", "scene_text_emb", "keyframe_vae_latent",
-                           "structure_latent", "flow_mag", "flow_token", "ofs_score", "dyn_label"]
+                           "structure_latent", "flow_mag", "flow_token", "ofs_score", "dyn_label",
+                           "flow_token_pca", "dyn_class_3", "motion_dir_8", "ofs_log_zscore"]
             for shard_path in sorted(_glob.glob(os.path.join(self.sf_targets_dir, "*.pt"))):
                 shard_data = torch.load(shard_path, map_location="cpu", weights_only=False)
                 clip_ids = shard_data.get("clip_ids", [])
@@ -653,33 +654,19 @@ class BrainDataset(Dataset):
         sf_targets = {}
         if clip_id_int in self._sf_preloaded:
             sf_targets = dict(self._sf_preloaded[clip_id_int])  # shallow copy
-            # v2 sharded format uses different key names, rename to standard
             if getattr(self, '_sf_cache_format', None) == "v2_sharded":
                 _name_map = {
                     "keyframe_img_emb": "gt_keyframe_embed",
                     "scene_text_emb": "gt_text_embed",
                     "structure_latent": "gt_structure_embed",
-                    "flow_token": "gt_motion_embed",
-                    "flow_mag": "gt_dynamics_embed",
-                    "ofs_score": "gt_tc_embed",
+                    "flow_token_pca": "gt_motion_embed",
+                    "dyn_class_3": "gt_dynamics_class",
+                    "motion_dir_8": "gt_direction_class",
+                    "ofs_log_zscore": "gt_tc_embed",
                 }
                 for src, dst in _name_map.items():
                     if src in sf_targets:
                         sf_targets[dst] = sf_targets.pop(src)
-        # Normalize fast branch targets to prevent loss scale explosion
-        # flow_token (gt_motion_embed): L2-normalize to unit norm
-        if "gt_motion_embed" in sf_targets:
-            t = sf_targets["gt_motion_embed"].float()
-            norm = t.norm() + 1e-8
-            sf_targets["gt_motion_embed"] = (t / norm)
-        # flow_mag (gt_dynamics_embed): z-score normalize (precomputed: mean=182.73, std=124.88)
-        if "gt_dynamics_embed" in sf_targets:
-            t = sf_targets["gt_dynamics_embed"].float()
-            sf_targets["gt_dynamics_embed"] = (t - 182.73) / (124.88 + 1e-8)
-        # ofs_score == flow_mag (extraction bug), disable by removing
-        if "gt_tc_embed" in sf_targets:
-            del sf_targets["gt_tc_embed"]
-
         # Always include sf_targets (empty dict is fine, ensures consistent collation)
         item["sf_targets"] = sf_targets
 

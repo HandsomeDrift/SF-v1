@@ -73,35 +73,50 @@ class SlowBranchLoss(nn.Module):
 
 
 class FastBranchLoss(nn.Module):
-    """Supervision for fast branch heads."""
-    def __init__(self, lambda_dyn=1.0, lambda_mot=1.0, lambda_tc=0.5):
+    """Supervision for fast branch heads (v3 targets)."""
+    def __init__(self, lambda_dyn=1.0, lambda_mot=1.0, lambda_tc=0.5, lambda_dir=0.5):
         super().__init__()
         self.lambda_dyn = lambda_dyn
         self.lambda_mot = lambda_mot
         self.lambda_tc = lambda_tc
+        self.lambda_dir = lambda_dir
 
     def forward(self, fast_out, targets):
         _ref = next(iter(fast_out.values()))
         losses = {}
         total = _ref.new_tensor(0.0)
 
-        if "z_dyn" in fast_out and "gt_dynamics_embed" in targets:
-            z_dyn = fast_out["z_dyn"]
-            gt_dyn = targets["gt_dynamics_embed"]
-            if gt_dyn.dim() != z_dyn.dim():
-                gt_dyn = gt_dyn.reshape_as(z_dyn)
-            losses["L_dyn"] = F.mse_loss(z_dyn, gt_dyn)
+        # Dynamics: CrossEntropy (3-class: slow/mid/fast)
+        if "z_dyn" in fast_out and "gt_dynamics_class" in targets:
+            logits = fast_out["z_dyn"]  # (B, 3)
+            labels = targets["gt_dynamics_class"].long()
+            losses["L_dyn"] = F.cross_entropy(logits, labels)
             total = total + self.lambda_dyn * losses["L_dyn"]
+
+        # Motion: cosine + MSE hybrid (PCA 128-dim)
         if "z_mot" in fast_out and "gt_motion_embed" in targets:
-            losses["L_mot"] = F.mse_loss(fast_out["z_mot"], targets["gt_motion_embed"])
+            pred = fast_out["z_mot"]  # (B, 128)
+            gt = targets["gt_motion_embed"]
+            mse = F.mse_loss(pred, gt)
+            cos = (1.0 - F.cosine_similarity(pred, gt, dim=-1)).mean()
+            losses["L_mot"] = 0.5 * mse + 0.5 * cos
             total = total + self.lambda_mot * losses["L_mot"]
+
+        # Temporal coherence: SmoothL1 (scalar regression, log-zscore normalized)
         if "z_tc" in fast_out and "gt_tc_embed" in targets:
             z_tc = fast_out["z_tc"]
             gt_tc = targets["gt_tc_embed"]
             if gt_tc.dim() != z_tc.dim():
                 gt_tc = gt_tc.reshape_as(z_tc)
-            losses["L_tc"] = F.mse_loss(z_tc, gt_tc)
+            losses["L_tc"] = F.smooth_l1_loss(z_tc, gt_tc)
             total = total + self.lambda_tc * losses["L_tc"]
+
+        # Motion direction: CrossEntropy (8-class)
+        if "z_dir" in fast_out and "gt_direction_class" in targets:
+            logits = fast_out["z_dir"]  # (B, 8)
+            labels = targets["gt_direction_class"].long()
+            losses["L_dir"] = F.cross_entropy(logits, labels)
+            total = total + self.lambda_dir * losses["L_dir"]
 
         return total, losses
 

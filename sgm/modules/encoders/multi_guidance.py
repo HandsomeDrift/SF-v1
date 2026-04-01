@@ -24,7 +24,7 @@ class MultiGuidanceAdapter(nn.Module):
         use_text_guidance=True,
         use_motion_guidance=True,
         use_brain_latent_guidance=True,
-        mot_input_dim=1922,
+        mot_input_dim=140,  # 3(dyn softmax) + 128(mot pca) + 1(tc) + 8(dir softmax)
     ):
         super().__init__()
         self.use_keyframe_guidance = use_keyframe_guidance
@@ -68,19 +68,29 @@ class MultiGuidanceAdapter(nn.Module):
         if self.use_motion_guidance:
             B = z_b.shape[0]
             device, dtype = z_b.device, z_b.dtype
-            # z_dyn: (B,) or (B,1) scalar, z_mot: (B, mot_dim), z_tc: (B,) or (B,1) scalar
-            z_dyn = fast_out.get("z_dyn", torch.zeros(B, device=device, dtype=dtype))
-            mot_vec_dim = self.mot_input_dim - 2  # exclude z_dyn(1) and z_tc(1)
-            z_mot = fast_out.get("z_mot", torch.zeros(B, mot_vec_dim, device=device, dtype=dtype))
-            z_tc = fast_out.get("z_tc", torch.zeros(B, device=device, dtype=dtype))
-            # Ensure all are at least 1D
-            if z_dyn.dim() == 0: z_dyn = z_dyn.unsqueeze(0)
-            if z_dyn.dim() == 1: z_dyn = z_dyn.unsqueeze(-1)  # (B,1)
-            if z_tc.dim() == 0: z_tc = z_tc.unsqueeze(0)
-            if z_tc.dim() == 1: z_tc = z_tc.unsqueeze(-1)  # (B,1)
-            mot_cat = torch.cat([z_dyn, z_mot, z_tc], dim=-1)  # (B, mot_dim+2)
-            g_mot = self.mot_proj(mot_cat).unsqueeze(1)
-            context = context + alphas["alpha_mot"].unsqueeze(-1) * g_mot
+            # Collect all fast branch outputs into a single vector
+            mot_parts = []
+            # z_dyn: (B, 3) class logits → softmax probabilities
+            z_dyn = fast_out.get("z_dyn", None)
+            if z_dyn is not None:
+                mot_parts.append(z_dyn.softmax(dim=-1) if z_dyn.dim() > 1 else z_dyn.unsqueeze(-1))
+            # z_mot: (B, 128) PCA motion embedding
+            z_mot = fast_out.get("z_mot", None)
+            if z_mot is not None:
+                mot_parts.append(z_mot)
+            # z_tc: (B,) scalar
+            z_tc = fast_out.get("z_tc", None)
+            if z_tc is not None:
+                mot_parts.append(z_tc.unsqueeze(-1) if z_tc.dim() < 2 else z_tc)
+            # z_dir: (B, 8) class logits → softmax probabilities
+            z_dir = fast_out.get("z_dir", None)
+            if z_dir is not None:
+                mot_parts.append(z_dir.softmax(dim=-1) if z_dir.dim() > 1 else z_dir.unsqueeze(-1))
+
+            if mot_parts:
+                mot_cat = torch.cat(mot_parts, dim=-1)  # (B, 3+128+1+8=140)
+                g_mot = self.mot_proj(mot_cat).unsqueeze(1)
+                context = context + alphas["alpha_mot"].unsqueeze(-1) * g_mot
 
         if self.use_brain_latent_guidance:
             context = context + alphas["alpha_brain"].unsqueeze(-1) * z_b

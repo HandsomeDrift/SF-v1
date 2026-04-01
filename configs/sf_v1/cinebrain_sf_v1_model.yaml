@@ -98,6 +98,10 @@ model:
             use_dynamics_head: true
             use_motion_head: true
             use_temporal_coherence_head: true  # no direct supervision (extraction bug), learns implicitly via guidance
+            use_direction_head: true
+            motion_pca_dim: 128
+            num_dyn_classes: 3
+            num_dir_classes: 8
             # Fusion
             fusion_hidden_dim: 2048
             fusion_num_layers: 4
@@ -169,6 +173,7 @@ model:
         lambda_dyn: 1.0
         lambda_mot: 1.0
         lambda_tc: 0.5
+        lambda_dir: 0.5
         lambda_gk: 0.5
         lambda_gt: 0.5
         lambda_gm: 0.5

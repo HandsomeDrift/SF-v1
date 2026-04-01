@@ -26,8 +26,8 @@ def check_dataset():
 
     # Check 1: sf_targets
     st = item["sf_targets"]
-    expected_keys = ["gt_keyframe_embed", "gt_text_embed", "gt_dynamics_embed",
-                     "gt_motion_embed", "gt_structure_embed"]  # gt_tc_embed removed: ofs==flow_mag bug
+    expected_keys = ["gt_keyframe_embed", "gt_text_embed", "gt_structure_embed",
+                     "gt_motion_embed", "gt_dynamics_class", "gt_direction_class", "gt_tc_embed"]
     results["sf_targets_non_empty"] = len(st) > 0
     missing = [k for k in expected_keys if k not in st]
     results["sf_targets_all_keys"] = len(missing) == 0
@@ -105,9 +105,10 @@ def check_model_forward(item):
         ("z_key", "gt_keyframe_embed"): True,
         ("z_txt", "gt_text_embed"): True,
         ("z_str", "gt_structure_embed"): True,
-        ("z_dyn", "gt_dynamics_embed"): True,
         ("z_mot", "gt_motion_embed"): True,
-        # ("z_tc", "gt_tc_embed"): skipped — ofs_score == flow_mag extraction bug
+        ("z_tc", "gt_tc_embed"): True,
+        # z_dyn (B,3) vs gt_dynamics_class (B,) — shape differs (logits vs label), check separately
+        # z_dir (B,8) vs gt_direction_class (B,) — same
     }
 
     print("[CHECK 2] Shape matching:")
