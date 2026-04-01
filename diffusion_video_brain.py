@@ -28,6 +28,9 @@ class SATVideoDiffusionEngineBrain(nn.Module):
         super().__init__()
 
         model_config = args.model_config
+        # Curriculum training: store freeze flags (from model config, not args)
+        self._freeze_slow = model_config.get('freeze_slow_branch', False)
+        self._freeze_fast = model_config.get('freeze_fast_branch', False)
         # model args preprocess
         log_keys = model_config.get("log_keys", None)
         input_key = model_config.get("input_key", "mp4")
@@ -139,14 +142,15 @@ class SATVideoDiffusionEngineBrain(nn.Module):
                 else:
                     total_trainable += p.numel()
 
-            # Curriculum: freeze individual branches if configured
-            embedder = self.conditioner.embedders[0]
-            if getattr(embedder, 'freeze_slow_branch', False):
+            # Curriculum: freeze individual branches if configured (read from args)
+            _freeze_slow = getattr(self, '_freeze_slow', False)
+            _freeze_fast = getattr(self, '_freeze_fast', False)
+            if _freeze_slow:
                 for n, p in self.named_parameters():
                     if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
                         if "fast_branch" not in n:  # fmri_encoder is shared, only freeze if not in fast path
                             p.requires_grad_(False)
-            if getattr(embedder, 'freeze_fast_branch', False):
+            if _freeze_fast:
                 for n, p in self.named_parameters():
                     if "fast_branch" in n or "eeg_encoder" in n:
                         if "slow_branch" not in n:
@@ -405,6 +409,8 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
         super().__init__()
 
         model_config = args.model_config
+        self._freeze_slow = model_config.get('freeze_slow_branch', False)
+        self._freeze_fast = model_config.get('freeze_fast_branch', False)
         # model args preprocess
         log_keys = model_config.get("log_keys", None)
         input_key = model_config.get("input_key", "mp4")
@@ -516,14 +522,15 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
                 else:
                     total_trainable += p.numel()
 
-            # Curriculum: freeze individual branches if configured
-            embedder = self.conditioner.embedders[0]
-            if getattr(embedder, 'freeze_slow_branch', False):
+            # Curriculum: freeze individual branches if configured (read from args)
+            _freeze_slow = getattr(self, '_freeze_slow', False)
+            _freeze_fast = getattr(self, '_freeze_fast', False)
+            if _freeze_slow:
                 for n, p in self.named_parameters():
                     if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
                         if "fast_branch" not in n:  # fmri_encoder is shared, only freeze if not in fast path
                             p.requires_grad_(False)
-            if getattr(embedder, 'freeze_fast_branch', False):
+            if _freeze_fast:
                 for n, p in self.named_parameters():
                     if "fast_branch" in n or "eeg_encoder" in n:
                         if "slow_branch" not in n:

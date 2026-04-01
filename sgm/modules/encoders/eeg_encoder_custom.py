@@ -151,8 +151,10 @@ class CustomEEGTransformer(nn.Module):
         # 添加位置编码
         x = x + self.pos_embed
 
-        # Apply multi-scale temporal convolution
-        x = self.tcn(x)
+        # Apply multi-scale temporal convolution (exclude CLS token)
+        x_cls, x_spatial = x[:, :1, :], x[:, 1:, :]
+        x_spatial = self.tcn(x_spatial)
+        x = torch.cat([x_cls, x_spatial], dim=1)
 
         eeg_cls = None
         cls_layer = len(self.encoder_layers) - 1  # extract CLS from last layer

@@ -20,7 +20,7 @@ class MultiScaleTCN(nn.Module):
         self.convs = nn.ModuleList([
             nn.Sequential(
                 nn.Conv1d(dim, branch_dim, k, padding=k // 2, groups=1),
-                nn.BatchNorm1d(branch_dim),
+                nn.GroupNorm(min(32, branch_dim), branch_dim),
                 nn.GELU(),
             ) for k in kernel_sizes
         ])

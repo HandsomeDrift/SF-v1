@@ -213,6 +213,7 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             lambda_dyn=cfg.get("lambda_dyn", 1.0),
             lambda_mot=cfg.get("lambda_mot", 1.0),
             lambda_tc=cfg.get("lambda_tc", 0.5),
+            lambda_dir=cfg.get("lambda_dir", 0.5),
         )
         self.guide_loss = GuidanceLoss(
             lambda_gk=cfg.get("lambda_gk", 0.5),
