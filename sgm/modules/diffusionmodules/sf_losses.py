@@ -148,3 +148,25 @@ class GuidanceLoss(nn.Module):
             pass
 
         return total, losses
+
+
+class AuxAlignmentLoss(nn.Module):
+    """InfoNCE: pull eeg_cls toward fmri_cls (detached) for curriculum training."""
+    def __init__(self, temperature=0.1):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, eeg_cls, fmri_cls):
+        """
+        Args:
+            eeg_cls: (B, D) EEG CLS token
+            fmri_cls: (B, D) fMRI CLS token (will be detached)
+        Returns:
+            loss: scalar InfoNCE loss
+        """
+        fmri_cls = fmri_cls.detach()
+        eeg_norm = F.normalize(eeg_cls, dim=-1)
+        fmri_norm = F.normalize(fmri_cls, dim=-1)
+        logits = eeg_norm @ fmri_norm.T / self.temperature
+        labels = torch.arange(eeg_cls.shape[0], device=eeg_cls.device)
+        return (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2

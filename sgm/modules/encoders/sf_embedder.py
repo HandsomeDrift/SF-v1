@@ -66,11 +66,16 @@ class SFBrainEmbedder(AbstractEmbModel):
         mode="infer",
         # Checkpoint
         ckpt="",
+        # Branch freezing for curriculum training
+        freeze_slow_branch=False,
+        freeze_fast_branch=False,
     ):
         super().__init__()
         self.mode = mode
         self.use_slow_branch = use_slow_branch
         self.use_fast_branch = use_fast_branch
+        self.freeze_slow_branch = freeze_slow_branch
+        self.freeze_fast_branch = freeze_fast_branch
         self.use_gated_fusion = use_gated_fusion
         self.use_multi_guidance = use_multi_guidance
 

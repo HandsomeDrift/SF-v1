@@ -138,6 +138,23 @@ class SATVideoDiffusionEngineBrain(nn.Module):
                     p.requires_grad_(False)
                 else:
                     total_trainable += p.numel()
+
+            # Curriculum: freeze individual branches if configured
+            embedder = self.conditioner.embedders[0]
+            if getattr(embedder, 'freeze_slow_branch', False):
+                for n, p in self.named_parameters():
+                    if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
+                        if "fast_branch" not in n:  # fmri_encoder is shared, only freeze if not in fast path
+                            p.requires_grad_(False)
+            if getattr(embedder, 'freeze_fast_branch', False):
+                for n, p in self.named_parameters():
+                    if "fast_branch" in n or "eeg_encoder" in n:
+                        if "slow_branch" not in n:
+                            p.requires_grad_(False)
+
+            # Recount trainable after curriculum freezing
+            total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+
         # for n, p in self.conditioner.named_parameters():print(n,p.requires_grad)
         print_rank0("***** Total trainable parameters: " + str(total_trainable) + " *****")
 
@@ -498,6 +515,22 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
                     p.requires_grad_(False)
                 else:
                     total_trainable += p.numel()
+
+            # Curriculum: freeze individual branches if configured
+            embedder = self.conditioner.embedders[0]
+            if getattr(embedder, 'freeze_slow_branch', False):
+                for n, p in self.named_parameters():
+                    if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
+                        if "fast_branch" not in n:  # fmri_encoder is shared, only freeze if not in fast path
+                            p.requires_grad_(False)
+            if getattr(embedder, 'freeze_fast_branch', False):
+                for n, p in self.named_parameters():
+                    if "fast_branch" in n or "eeg_encoder" in n:
+                        if "slow_branch" not in n:
+                            p.requires_grad_(False)
+
+            # Recount trainable after curriculum freezing
+            total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
 
         print_rank0("***** Total trainable parameters: " + str(total_trainable) + " *****")
 

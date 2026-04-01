@@ -220,6 +220,10 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             lambda_gm=cfg.get("lambda_gm", 0.5),
         )
 
+        from sgm.modules.diffusionmodules.sf_losses import AuxAlignmentLoss
+        self.aux_align = AuxAlignmentLoss()
+        self.lambda_aux = cfg.get("lambda_aux", 0.0)  # 0 by default, enable via config
+
     def __call__(self, network, denoiser, conditioner, input, batch):
         # Run conditioner (SFBrainEmbedder) to get cond and populate _last_slow_out etc.
         cond = conditioner(batch)
@@ -257,6 +261,11 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
         if "z_dyn" in fast_out and targets:
             l_fast, _ = self.fast_loss(fast_out, targets)
             sf_total = sf_total + l_fast
+
+        # Auxiliary EEG-fMRI alignment (curriculum Stage 2+)
+        if self.lambda_aux > 0 and "fmri_cls" in slow_out and "eeg_cls" in fast_out:
+            l_aux = self.aux_align(fast_out["eeg_cls"], slow_out["fmri_cls"])
+            sf_total = sf_total + self.lambda_aux * l_aux
 
         # Guidance loss (stage 2+): pass video/text embeds from targets
         if self.training_stage in ("fusion", "joint"):
@@ -316,6 +325,8 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
                 self._last_loss_breakdown["sf/L_slow"] = l_slow.detach().float().item()
             if 'l_fast' in locals():
                 self._last_loss_breakdown["sf/L_fast"] = l_fast.detach().float().item()
+            if 'l_aux' in locals():
+                self._last_loss_breakdown["sf/L_aux"] = l_aux.detach().float().item()
             if 'l_guide' in locals():
                 self._last_loss_breakdown["sf/L_guide"] = l_guide.detach().float().item()
             self._last_loss_breakdown["sf/total"] = sf_total.detach().float().item()
@@ -330,6 +341,8 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             self._last_loss_breakdown["sf/L_slow"] = l_slow.detach().float().item()
         if 'l_fast' in locals():
             self._last_loss_breakdown["sf/L_fast"] = l_fast.detach().float().item()
+        if 'l_aux' in locals():
+            self._last_loss_breakdown["sf/L_aux"] = l_aux.detach().float().item()
         if 'l_guide' in locals():
             self._last_loss_breakdown["sf/L_guide"] = l_guide.detach().float().item()
         self._last_loss_breakdown["sf/total"] = sf_total.detach().float().item()
