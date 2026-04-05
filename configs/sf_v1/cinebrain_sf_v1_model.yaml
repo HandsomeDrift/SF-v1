@@ -56,6 +56,7 @@ model:
           target: sat.model.finetune.lora2.LoraMixin
           params:
             r: 128
+            lora_alpha: 128
 
         patch_embed_config:
           target: dit_video_concat_fmri.ImagePatchEmbeddingMixin
@@ -111,6 +112,13 @@ model:
             use_text_guidance: true
             use_motion_guidance: true
             use_brain_latent_guidance: true
+            # P1: Temporal dynamics
+            use_temporal_dynamics: true
+            num_temporal_queries: 9
+            temporal_d_model: 512
+            use_causal_mask: true
+            # Guidance
+            use_temporal_guidance: true
             # Training mode
             mode: infer
             ckpt: ''

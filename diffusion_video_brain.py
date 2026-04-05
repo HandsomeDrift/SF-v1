@@ -31,6 +31,7 @@ class SATVideoDiffusionEngineBrain(nn.Module):
         # Curriculum training: store freeze flags (from model config, not args)
         self._freeze_slow = model_config.get('freeze_slow_branch', False)
         self._freeze_fast = model_config.get('freeze_fast_branch', False)
+        self._unfreeze_fusion = model_config.get('unfreeze_fusion', False)
         # model args preprocess
         log_keys = model_config.get("log_keys", None)
         input_key = model_config.get("input_key", "mp4")
@@ -97,11 +98,21 @@ class SATVideoDiffusionEngineBrain(nn.Module):
     def disable_untrainable_params(self):
         total_trainable = 0
         if self.lora_train:
+            # LoRA mode: freeze everything except LoRA params + SF trainable modules
+            lora_names = ['matrix_A', 'matrix_B', 'lora_layer']
+            sf_trainable_keys = [
+                "slow_branch", "fast_branch", "gated_fusion",
+                "guidance_adapter", "auditory_encoder",
+                "fmri_eeg_linear", "eeg_encoder", "fmri_encoder",
+                "align_loss", "slow_loss", "fast_loss", "guide_loss",
+            ]
             for n, p in self.named_parameters():
                 if p.requires_grad == False:
                     continue
-                if 'lora_layer' not in n:
-                    p.lr_scale = 0
+                is_lora = any(ln in n for ln in lora_names)
+                is_sf = any(key in n for key in sf_trainable_keys)
+                if not is_lora and not is_sf:
+                    p.requires_grad_(False)
                 else:
                     total_trainable += p.numel()
         else:
@@ -142,22 +153,32 @@ class SATVideoDiffusionEngineBrain(nn.Module):
                 else:
                     total_trainable += p.numel()
 
-            # Curriculum: freeze individual branches if configured (read from args)
-            _freeze_slow = getattr(self, '_freeze_slow', False)
-            _freeze_fast = getattr(self, '_freeze_fast', False)
-            if _freeze_slow:
-                for n, p in self.named_parameters():
-                    if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
-                        if "fast_branch" not in n:  # fmri_encoder is shared, only freeze if not in fast path
-                            p.requires_grad_(False)
-            if _freeze_fast:
-                for n, p in self.named_parameters():
-                    if "fast_branch" in n or "eeg_encoder" in n:
-                        if "slow_branch" not in n:
-                            p.requires_grad_(False)
+        # Curriculum freezing (applies to both lora_train and normal mode)
+        _freeze_slow = getattr(self, '_freeze_slow', False)
+        _freeze_fast = getattr(self, '_freeze_fast', False)
+        if _freeze_slow:
+            for n, p in self.named_parameters():
+                if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
+                    if "fast_branch" not in n:
+                        p.requires_grad_(False)
+        if _freeze_fast:
+            for n, p in self.named_parameters():
+                if "fast_branch" in n or "eeg_encoder" in n:
+                    if "slow_branch" not in n:
+                        p.requires_grad_(False)
 
-            # Recount trainable after curriculum freezing
-            total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        # Stage 2+: unfreeze fusion modules after global freeze
+        _unfreeze_fusion = getattr(self, '_unfreeze_fusion', False)
+        if _unfreeze_fusion:
+            fusion_unfrozen = 0
+            for n, p in self.named_parameters():
+                if "gated_fusion" in n or "guidance_adapter" in n:
+                    p.requires_grad_(True)
+                    fusion_unfrozen += p.numel()
+            print_rank0(f"[Fusion] Unfroze fusion modules: {fusion_unfrozen:,} params")
+
+        # Recount trainable after all freezing/unfreezing
+        total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
 
         # for n, p in self.conditioner.named_parameters():print(n,p.requires_grad)
         print_rank0("***** Total trainable parameters: " + str(total_trainable) + " *****")
@@ -411,6 +432,7 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
         model_config = args.model_config
         self._freeze_slow = model_config.get('freeze_slow_branch', False)
         self._freeze_fast = model_config.get('freeze_fast_branch', False)
+        self._unfreeze_fusion = model_config.get('unfreeze_fusion', False)
         # model args preprocess
         log_keys = model_config.get("log_keys", None)
         input_key = model_config.get("input_key", "mp4")
@@ -477,11 +499,21 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
     def disable_untrainable_params(self):
         total_trainable = 0
         if self.lora_train:
+            # LoRA mode: freeze everything except LoRA params + SF trainable modules
+            lora_names = ['matrix_A', 'matrix_B', 'lora_layer']
+            sf_trainable_keys = [
+                "slow_branch", "fast_branch", "gated_fusion",
+                "guidance_adapter", "auditory_encoder",
+                "fmri_eeg_linear", "eeg_encoder", "fmri_encoder",
+                "align_loss", "slow_loss", "fast_loss", "guide_loss",
+            ]
             for n, p in self.named_parameters():
                 if p.requires_grad == False:
                     continue
-                if 'lora_layer' not in n:
-                    p.lr_scale = 0
+                is_lora = any(ln in n for ln in lora_names)
+                is_sf = any(key in n for key in sf_trainable_keys)
+                if not is_lora and not is_sf:
+                    p.requires_grad_(False)
                 else:
                     total_trainable += p.numel()
         else:
@@ -522,22 +554,32 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
                 else:
                     total_trainable += p.numel()
 
-            # Curriculum: freeze individual branches if configured (read from args)
-            _freeze_slow = getattr(self, '_freeze_slow', False)
-            _freeze_fast = getattr(self, '_freeze_fast', False)
-            if _freeze_slow:
-                for n, p in self.named_parameters():
-                    if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
-                        if "fast_branch" not in n:  # fmri_encoder is shared, only freeze if not in fast path
-                            p.requires_grad_(False)
-            if _freeze_fast:
-                for n, p in self.named_parameters():
-                    if "fast_branch" in n or "eeg_encoder" in n:
-                        if "slow_branch" not in n:
-                            p.requires_grad_(False)
+        # Curriculum freezing (applies to both lora_train and normal mode)
+        _freeze_slow = getattr(self, '_freeze_slow', False)
+        _freeze_fast = getattr(self, '_freeze_fast', False)
+        if _freeze_slow:
+            for n, p in self.named_parameters():
+                if "slow_branch" in n or "fmri_encoder" in n or "auditory_encoder" in n:
+                    if "fast_branch" not in n:
+                        p.requires_grad_(False)
+        if _freeze_fast:
+            for n, p in self.named_parameters():
+                if "fast_branch" in n or "eeg_encoder" in n:
+                    if "slow_branch" not in n:
+                        p.requires_grad_(False)
 
-            # Recount trainable after curriculum freezing
-            total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        # Stage 2+: unfreeze fusion modules after global freeze
+        _unfreeze_fusion = getattr(self, '_unfreeze_fusion', False)
+        if _unfreeze_fusion:
+            fusion_unfrozen = 0
+            for n, p in self.named_parameters():
+                if "gated_fusion" in n or "guidance_adapter" in n:
+                    p.requires_grad_(True)
+                    fusion_unfrozen += p.numel()
+            print_rank0(f"[Fusion] Unfroze fusion modules: {fusion_unfrozen:,} params")
+
+        # Recount trainable after all freezing/unfreezing
+        total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
 
         print_rank0("***** Total trainable parameters: " + str(total_trainable) + " *****")
 

@@ -505,13 +505,16 @@ from transformers import AutoProcessor
 
 class BrainDataset(Dataset):
     def __init__(self, data_dir, video_size, fps, max_num_frames, skip_frms_num=3,
-                 sf_targets_dir=""):
+                 sf_targets_dir="", sf_target_keys=None):
         super(BrainDataset, self).__init__()
         self.data_ann = json.load(open(data_dir, "r"))
         self.fmri_dir = ""
         self.eeg_dir = ""
         self.video_size = video_size
         self.sf_targets_dir = sf_targets_dir
+        # Configurable preload keys: None = all processed keys (incl. heavy ones like structure_latent)
+        # Pass a list from config to exclude heavy keys for multi-GPU training
+        self._sf_target_keys = sf_target_keys
         decord.bridge.set_bridge("torch")
 
         from local_config import get_paths
@@ -546,17 +549,25 @@ class BrainDataset(Dataset):
                 self._sf_cache_format = None
 
         # Preload v2 shard data into memory for fast access
-        # Each target tensor is stored as a dict: clip_id_int → tensor
+        # Only load clip IDs that appear in the training data to save CPU memory
         self._sf_preloaded = {}
+        _needed_cids = set()
+        for item in self.data_ann:
+            _needed_cids.add(int(os.path.splitext(os.path.basename(item["video"]))[0]))
+
         if getattr(self, '_sf_cache_format', None) == "v2_sharded" and self.sf_targets_dir:
             import glob as _glob
-            target_keys = ["keyframe_img_emb", "scene_text_emb", "keyframe_vae_latent",
-                           "structure_latent", "flow_mag", "flow_token", "ofs_score", "dyn_label",
-                           "flow_token_pca", "dyn_class_3", "motion_dir_8", "ofs_log_zscore"]
+            # Default: all processed keys. Override via sf_target_keys in config
+            # to exclude heavy keys (structure_latent=330MB/1000clips) for multi-GPU
+            _all_keys = ["keyframe_img_emb", "scene_text_emb", "structure_latent",
+                         "flow_token_pca", "dyn_class_3", "motion_dir_8", "ofs_log_zscore"]
+            target_keys = self._sf_target_keys if self._sf_target_keys is not None else _all_keys
             for shard_path in sorted(_glob.glob(os.path.join(self.sf_targets_dir, "*.pt"))):
                 shard_data = torch.load(shard_path, map_location="cpu", weights_only=False)
                 clip_ids = shard_data.get("clip_ids", [])
                 for i, cid in enumerate(clip_ids):
+                    if cid not in _needed_cids:
+                        continue
                     entry = {}
                     for key in target_keys:
                         if key in shard_data and isinstance(shard_data[key], torch.Tensor):
@@ -564,7 +575,7 @@ class BrainDataset(Dataset):
                                 entry[key] = shard_data[key][i]
                     self._sf_preloaded[cid] = entry
                 del shard_data
-            print(f"[BrainDataset] Preloaded {len(self._sf_preloaded)} supervision targets into memory")
+            print(f"[BrainDataset] Preloaded {len(self._sf_preloaded)}/{len(_needed_cids)} supervision targets into memory")
 
         # Preload v1 per-clip sf_targets (directory-based: sf_targets/{clip_id}/{target}.npy)
         if getattr(self, '_sf_cache_format', None) == "v1_per_clip" and self.sf_targets_dir:
@@ -663,10 +674,16 @@ class BrainDataset(Dataset):
                     "dyn_class_3": "gt_dynamics_class",
                     "motion_dir_8": "gt_direction_class",
                     "ofs_log_zscore": "gt_tc_embed",
+                    "temporal_frame_embs": "gt_temporal_frame_embs",
+                    "flow_mag_traj": "gt_flow_mag_traj",
                 }
                 for src, dst in _name_map.items():
                     if src in sf_targets:
                         sf_targets[dst] = sf_targets.pop(src)
+            # Convert 3-class dynamics to 2-class (0=static, 1/2→1=dynamic)
+            if "gt_dynamics_class" in sf_targets:
+                dyn3 = sf_targets["gt_dynamics_class"]
+                sf_targets["gt_dyn_label_2class"] = (dyn3 > 0).long()
         # Always include sf_targets (empty dict is fine, ensures consistent collation)
         item["sf_targets"] = sf_targets
 

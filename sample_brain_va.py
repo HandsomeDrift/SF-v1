@@ -137,7 +137,7 @@ def sampling_main(args, model_cls):
     force_uc_zero_embeddings = ["fmri"]
     # T = 9
     T, C = args.sampling_num_frames, args.latent_channels
-    with torch.no_grad():
+    with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
         skipped = 0
         for data_item in tqdm(json_data):
             video_path = data_item["video"]
@@ -154,7 +154,10 @@ def sampling_main(args, model_cls):
             for i in range(len(fmri_path)):
                 fmri = torch.from_numpy(np.load(fmri_path[i])).unsqueeze(0)
                 fmri_data_list.append(fmri)
-            fmri = torch.cat(fmri_data_list, dim=0).unsqueeze(0).cuda()
+            fmri_full = torch.cat(fmri_data_list, dim=0).unsqueeze(0).cuda()
+            # Split visual (8405) and auditory (10541) ROIs — matches data_video.py
+            fmri = fmri_full[:, :, :8405]
+            fmri_auditory = fmri_full[:, :, 8405:]
 
             eeg_path = data_item["eeg"]
             eeg_data_list = []
@@ -174,8 +177,9 @@ def sampling_main(args, model_cls):
 
             batch={
                 "fmri": fmri,
+                "fmri_auditory": fmri_auditory,
                 "eeg": eeg,
-                "num_frames":33
+                "num_frames": 33
             }
             for key in batch:
                 if isinstance(batch[key], torch.Tensor):
@@ -220,14 +224,22 @@ if __name__ == "__main__":
         os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
         os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
     py_parser = argparse.ArgumentParser(add_help=False)
+    py_parser.add_argument('--output_dir', type=str, required=True)
     known, args_list = py_parser.parse_known_args()
 
     args = get_args(args_list)
-    args = argparse.Namespace(**vars(args), **vars(known))
+    args.output_dir = known.output_dir
     del args.deepspeed_config
     args.model_config.first_stage_config.params.cp_size = 1
     args.model_config.network_config.params.transformer_args.model_parallel_size = 1
     args.model_config.network_config.params.transformer_args.checkpoint_activations = False
     args.model_config.loss_fn_config.params.sigma_sampler_config.params.uniform_sampling = False
+
+    # Sampling parameters for CogVideoX-5B
+    args.sampling_num_frames = 13   # VAE temporal compression: 33 video frames → 13 latent frames
+    args.latent_channels = 16
+    args.sampling_image_size = [480, 720]
+    args.sampling_fps = 8
+    args.batch_size = 1
 
     sampling_main(args, model_cls=SATVideoDiffusionEngineBrain)

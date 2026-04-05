@@ -1,4 +1,4 @@
-"""CineBrain-SF v1 loss functions: alignment, slow, fast, guidance.
+"""CineBrain-SF v1 loss functions: alignment, slow, fast (distillation), guidance.
 All losses are bf16-safe: use input tensor dtype/device for initialization.
 """
 import torch
@@ -72,51 +72,126 @@ class SlowBranchLoss(nn.Module):
         return total, losses
 
 
-class FastBranchLoss(nn.Module):
-    """Supervision for fast branch heads (v3 targets)."""
-    def __init__(self, lambda_dyn=1.0, lambda_mot=1.0, lambda_tc=0.5, lambda_dir=0.5):
-        super().__init__()
-        self.lambda_dyn = lambda_dyn
-        self.lambda_mot = lambda_mot
-        self.lambda_tc = lambda_tc
-        self.lambda_dir = lambda_dir
+class FastBranchDistillLoss(nn.Module):
+    """Distillation loss for fast branch: EEG learns to match fMRI features.
 
-    def forward(self, fast_out, targets):
-        _ref = next(iter(fast_out.values()))
+    Two-level distillation:
+    1. CLS-level: MSE(eeg_cls_proj, fmri_cls.detach()) - global semantics
+    2. Spatial-level: MSE(eeg_pooled_proj, fmri_pooled.detach()) - spatial features
+
+    P1 extension (when targets provided):
+    3. L_temporal_delta: MSE(predicted delta, gt delta) - frame-to-frame changes
+    4. L_temporal_abs: MSE(predicted abs, gt abs temporal frame embs)
+    5. L_flow_traj: MSE(predicted flow traj, gt flow mag traj)
+    6. L_dyn: CrossEntropy(dyn_logits, dyn_label_2class) - coarse dynamics
+
+    This replaces the old FastBranchLoss (classification on RAFT optical flow).
+    """
+    def __init__(self, lambda_cls=1.0, lambda_spatial=1.0,
+                 lambda_temporal_delta=1.0, lambda_temporal_abs=0.2,
+                 lambda_flow_traj=0.3, lambda_dyn=0.1, lambda_struct=0.0):
+        super().__init__()
+        self.lambda_cls = lambda_cls
+        self.lambda_spatial = lambda_spatial
+        # P1 loss weights
+        self.lambda_temporal_delta = lambda_temporal_delta
+        self.lambda_temporal_abs = lambda_temporal_abs
+        self.lambda_flow_traj = lambda_flow_traj
+        self.lambda_dyn = lambda_dyn
+        # Stage 3: structural similarity loss (DynaMind-inspired)
+        self.lambda_struct = lambda_struct
+
+    def forward(self, fast_out, slow_out, targets=None):
+        """
+        Args:
+            fast_out: dict from FastBranch with eeg_cls_proj, eeg_pooled_proj,
+                      and optionally temporal_tokens, global_dyn_token, flow_traj_pred, dyn_logits
+            slow_out: dict from SlowBranch with fmri_cls, fmri_spatial (teacher, detached)
+            targets: optional dict with gt_temporal_frame_embs, gt_flow_mag_traj, gt_dyn_label_2class
+        Returns:
+            total: scalar loss
+            losses: dict of individual losses
+        """
+        _ref = fast_out["eeg_cls"]
         losses = {}
         total = _ref.new_tensor(0.0)
 
-        # Dynamics: CrossEntropy (3-class: slow/mid/fast)
-        if "z_dyn" in fast_out and "gt_dynamics_class" in targets:
-            logits = fast_out["z_dyn"]  # (B, 3)
-            labels = targets["gt_dynamics_class"].long()
-            losses["L_dyn"] = F.cross_entropy(logits, labels)
+        # CLS-level distillation: (B, 1152) vs (B, 1152)
+        if "eeg_cls_proj" in fast_out and "fmri_cls" in slow_out:
+            eeg_cls = fast_out["eeg_cls_proj"]
+            fmri_cls = slow_out["fmri_cls"].detach()
+            losses["L_distill_cls"] = F.mse_loss(eeg_cls, fmri_cls)
+            total = total + self.lambda_cls * losses["L_distill_cls"]
+
+        # Spatial-level distillation: (B, 2048) vs (B, 2048)
+        # fMRI spatial features pooled to match EEG pooled features
+        if "eeg_pooled_proj" in fast_out and "fmri_spatial" in slow_out:
+            eeg_pooled = fast_out["eeg_pooled_proj"]
+            fmri_spatial = slow_out["fmri_spatial"].detach()  # (B, 226, 2048)
+            fmri_pooled = fmri_spatial.mean(dim=1)  # (B, 2048)
+            losses["L_distill_spatial"] = F.mse_loss(eeg_pooled, fmri_pooled)
+            total = total + self.lambda_spatial * losses["L_distill_spatial"]
+
+        # --- P1: Temporal dynamics losses (only when temporal_tokens present) ---
+        if targets is None:
+            targets = {}
+
+        if "temporal_tokens" in fast_out:
+            temporal_tokens = fast_out["temporal_tokens"]  # (B, T, 1152)
+
+            # L_temporal_delta: MSE between predicted delta and GT delta
+            # delta = frame_t - frame_1 (relative to first frame)
+            if "gt_temporal_frame_embs" in targets:
+                gt_frame_embs = targets["gt_temporal_frame_embs"]  # (B, T, D)
+                # Ensure T dimensions match (truncate to min)
+                T_pred = temporal_tokens.shape[1]
+                T_gt = gt_frame_embs.shape[1]
+                T = min(T_pred, T_gt)
+
+                gt_frame_embs = gt_frame_embs[:, :T, :]
+                pred_tokens = temporal_tokens[:, :T, :]
+
+                # Delta: relative to first frame
+                gt_delta = gt_frame_embs - gt_frame_embs[:, :1, :]  # (B, T, D)
+                pred_delta = pred_tokens - pred_tokens[:, :1, :]    # (B, T, D)
+                losses["L_temporal_delta"] = F.mse_loss(pred_delta, gt_delta)
+                total = total + self.lambda_temporal_delta * losses["L_temporal_delta"]
+
+                # L_temporal_abs: MSE between predicted and GT absolute frame embeddings
+                losses["L_temporal_abs"] = F.mse_loss(pred_tokens, gt_frame_embs)
+                total = total + self.lambda_temporal_abs * losses["L_temporal_abs"]
+
+            # L_flow_traj: MSE between predicted flow trajectory and GT flow magnitude
+            if "flow_traj_pred" in fast_out and "gt_flow_mag_traj" in targets:
+                flow_pred = fast_out["flow_traj_pred"]       # (B, T)
+                flow_gt = targets["gt_flow_mag_traj"]        # (B, T)
+                T_pred = flow_pred.shape[1]
+                T_gt = flow_gt.shape[1]
+                T = min(T_pred, T_gt)
+                losses["L_flow_traj"] = F.mse_loss(flow_pred[:, :T], flow_gt[:, :T])
+                total = total + self.lambda_flow_traj * losses["L_flow_traj"]
+
+        # L_struct: Structural similarity loss (DynaMind-inspired)
+        # Matches inter-frame relationship structure, not per-frame values
+        if self.lambda_struct > 0 and "temporal_tokens" in fast_out and "gt_temporal_frame_embs" in targets:
+            pred_t = fast_out["temporal_tokens"]
+            gt_t = targets["gt_temporal_frame_embs"]
+            T = min(pred_t.shape[1], gt_t.shape[1])
+            pred_norm = F.normalize(pred_t[:, :T].float(), dim=-1)
+            gt_norm = F.normalize(gt_t[:, :T].float(), dim=-1)
+            S_pred = torch.bmm(pred_norm, pred_norm.transpose(1, 2))  # (B, T, T)
+            S_gt = torch.bmm(gt_norm, gt_norm.transpose(1, 2))        # (B, T, T)
+            # Only compute on off-diagonal (diagonal is always 1.0 vs 1.0 = 0, wastes gradient)
+            mask = ~torch.eye(T, device=S_pred.device, dtype=torch.bool).unsqueeze(0)
+            losses["L_struct"] = F.mse_loss(S_pred[mask], S_gt[mask])
+            total = total + self.lambda_struct * losses["L_struct"]
+
+        # L_dyn: Coarse dynamics classification (2-class)
+        if "dyn_logits" in fast_out and "gt_dyn_label_2class" in targets:
+            dyn_logits = fast_out["dyn_logits"]          # (B, 2)
+            dyn_labels = targets["gt_dyn_label_2class"]  # (B,) long
+            losses["L_dyn"] = F.cross_entropy(dyn_logits, dyn_labels.long())
             total = total + self.lambda_dyn * losses["L_dyn"]
-
-        # Motion: cosine + MSE hybrid (PCA 128-dim)
-        if "z_mot" in fast_out and "gt_motion_embed" in targets:
-            pred = fast_out["z_mot"]  # (B, 128)
-            gt = targets["gt_motion_embed"]
-            mse = F.mse_loss(pred, gt)
-            cos = (1.0 - F.cosine_similarity(pred, gt, dim=-1)).mean()
-            losses["L_mot"] = 0.5 * mse + 0.5 * cos
-            total = total + self.lambda_mot * losses["L_mot"]
-
-        # Temporal coherence: SmoothL1 (scalar regression, log-zscore normalized)
-        if "z_tc" in fast_out and "gt_tc_embed" in targets:
-            z_tc = fast_out["z_tc"]
-            gt_tc = targets["gt_tc_embed"]
-            if gt_tc.dim() != z_tc.dim():
-                gt_tc = gt_tc.reshape_as(z_tc)
-            losses["L_tc"] = F.smooth_l1_loss(z_tc, gt_tc)
-            total = total + self.lambda_tc * losses["L_tc"]
-
-        # Motion direction: CrossEntropy (8-class)
-        if "z_dir" in fast_out and "gt_direction_class" in targets:
-            logits = fast_out["z_dir"]  # (B, 8)
-            labels = targets["gt_direction_class"].long()
-            losses["L_dir"] = F.cross_entropy(logits, labels)
-            total = total + self.lambda_dir * losses["L_dir"]
 
         return total, losses
 
@@ -142,10 +217,6 @@ class GuidanceLoss(nn.Module):
             cos_sim = F.cosine_similarity(slow_out["z_txt"], text_embed, dim=-1).mean()
             losses["L_gt"] = cos_sim.new_tensor(1.0) - cos_sim
             total = total + self.lambda_gt * losses["L_gt"]
-        if "z_mot" in fast_out and video_embed is not None:
-            # z_mot is (B, 1920) flow tokens — compare using MSE with pooled video embed
-            # Skip if shapes don't match (guidance loss is secondary)
-            pass
 
         return total, losses
 
@@ -157,13 +228,6 @@ class AuxAlignmentLoss(nn.Module):
         self.temperature = temperature
 
     def forward(self, eeg_cls, fmri_cls):
-        """
-        Args:
-            eeg_cls: (B, D) EEG CLS token
-            fmri_cls: (B, D) fMRI CLS token (will be detached)
-        Returns:
-            loss: scalar InfoNCE loss
-        """
         fmri_cls = fmri_cls.detach()
         eeg_norm = F.normalize(eeg_cls, dim=-1)
         fmri_norm = F.normalize(fmri_cls, dim=-1)

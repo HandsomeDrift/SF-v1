@@ -187,7 +187,7 @@ def forward_step_eval(data_iterator, model, args, timers, only_log_video_latents
         batch_video = {"mp4": None, "fps": None, "num_frames": None, "fmri": None,
                        "fmri_auditory": None, "eeg": None, "text": None, "video": None, "sf_targets": {}}
     broad_cast_batch(batch_video)
-    if mpu.get_data_parallel_rank() == 0:
+    if mpu.get_data_parallel_rank() == 0 and not getattr(args, 'skip_eval_sampling', False):
         log_video(batch_video, model, args, only_log_video_latents=only_log_video_latents)
 
     batch_video["global_step"] = args.iteration

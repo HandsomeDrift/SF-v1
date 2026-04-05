@@ -62,6 +62,12 @@ class SFBrainEmbedder(AbstractEmbModel):
         use_text_guidance=True,
         use_motion_guidance=True,
         use_brain_latent_guidance=True,
+        # P1: Temporal dynamics
+        use_temporal_dynamics=False,
+        num_temporal_queries=9,
+        temporal_d_model=512,
+        use_temporal_guidance=False,
+        use_causal_mask=False,
         # Training mode
         mode="infer",
         # Checkpoint
@@ -131,6 +137,10 @@ class SFBrainEmbedder(AbstractEmbModel):
                 motion_pca_dim=motion_pca_dim,
                 num_dyn_classes=num_dyn_classes,
                 num_dir_classes=num_dir_classes,
+                use_temporal_dynamics=use_temporal_dynamics,
+                num_temporal_queries=num_temporal_queries,
+                temporal_d_model=temporal_d_model,
+                use_causal_mask=use_causal_mask,
             )
 
         if use_gated_fusion and use_slow_branch and use_fast_branch:
@@ -154,8 +164,21 @@ class SFBrainEmbedder(AbstractEmbModel):
                 use_text_guidance=use_text_guidance,
                 use_motion_guidance=use_motion_guidance,
                 use_brain_latent_guidance=use_brain_latent_guidance,
-                mot_input_dim=140,  # 3(dyn) + 128(mot) + 1(tc) + 8(dir)
+                mot_input_dim=2048,  # v2: distilled EEG pooled feature dim
+                use_temporal_guidance=use_temporal_guidance,
             )
+
+        # Apply branch freezing for curriculum training (C-02 fix)
+        if self.freeze_slow_branch and hasattr(self, 'slow_branch'):
+            for p in self.slow_branch.parameters():
+                p.requires_grad_(False)
+            print("[SFBrainEmbedder] Slow branch frozen (%d params)" %
+                  sum(p.numel() for p in self.slow_branch.parameters()))
+        if self.freeze_fast_branch and hasattr(self, 'fast_branch'):
+            for p in self.fast_branch.parameters():
+                p.requires_grad_(False)
+            print("[SFBrainEmbedder] Fast branch frozen (%d params)" %
+                  sum(p.numel() for p in self.fast_branch.parameters()))
 
     def forward(self, batch, siglip_model):
         self.dtype = self.v_clip_linear.weight.dtype

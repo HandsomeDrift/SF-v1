@@ -188,12 +188,13 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
     - fusion: L_align + L_slow + L_fast + L_guide (no diffusion loss)
     - joint: L_diff + L_align + L_slow + L_fast + L_guide
     """
-    def __init__(self, training_stage="joint", sf_loss_config=None, **kwargs):
+    def __init__(self, training_stage="joint", sf_loss_config=None, lambda_sf=0.003, **kwargs):
         super().__init__(**kwargs)
         self.training_stage = training_stage
+        self.lambda_sf = lambda_sf
 
         from sgm.modules.diffusionmodules.sf_losses import (
-            AlignmentLoss, SlowBranchLoss, FastBranchLoss, GuidanceLoss
+            AlignmentLoss, SlowBranchLoss, FastBranchDistillLoss, GuidanceLoss
         )
 
         cfg = sf_loss_config or {}
@@ -209,11 +210,15 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             lambda_txt=cfg.get("lambda_txt", 1.0),
             lambda_str=cfg.get("lambda_str", 1.0),
         )
-        self.fast_loss = FastBranchLoss(
-            lambda_dyn=cfg.get("lambda_dyn", 1.0),
-            lambda_mot=cfg.get("lambda_mot", 1.0),
-            lambda_tc=cfg.get("lambda_tc", 0.5),
-            lambda_dir=cfg.get("lambda_dir", 0.5),
+        self.fast_loss = FastBranchDistillLoss(
+            lambda_cls=cfg.get("lambda_distill_cls", 1.0),
+            lambda_spatial=cfg.get("lambda_distill_spatial", 1.0),
+            # P1 loss weights
+            lambda_temporal_delta=cfg.get("lambda_temporal_delta", 1.0),
+            lambda_temporal_abs=cfg.get("lambda_temporal_abs", 0.2),
+            lambda_flow_traj=cfg.get("lambda_flow_traj", 0.3),
+            lambda_dyn=cfg.get("lambda_dyn", 0.1),
+            lambda_struct=cfg.get("lambda_struct", 0.0),
         )
         self.guide_loss = GuidanceLoss(
             lambda_gk=cfg.get("lambda_gk", 0.5),
@@ -258,9 +263,9 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             l_slow, _ = self.slow_loss(slow_out, targets)
             sf_total = sf_total + l_slow
 
-        # Fast branch loss
-        if "z_dyn" in fast_out and targets:
-            l_fast, _ = self.fast_loss(fast_out, targets)
+        # Fast branch loss (P1: now passes targets for temporal dynamics losses)
+        if "eeg_cls_proj" in fast_out and "fmri_cls" in slow_out:
+            l_fast, fast_losses = self.fast_loss(fast_out, slow_out, targets)
             sf_total = sf_total + l_fast
 
         # Auxiliary EEG-fMRI alignment (curriculum Stage 2+)
@@ -276,8 +281,8 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
                 l_guide, _ = self.guide_loss(slow_out, fast_out, video_embed, text_embed)
                 sf_total = sf_total + l_guide
 
-        # Diffusion loss (stage 3 only)
-        if self.training_stage == "joint":
+        # Diffusion loss (stage 2 fusion + stage 3 joint)
+        if self.training_stage in ("fusion", "joint"):
             additional_model_inputs = {key: batch[key] for key in self.batch2model_keys.intersection(batch)}
             alphas_cumprod_sqrt, idx = self.sigma_sampler(input.shape[0], return_idx=True)
             alphas_cumprod_sqrt = alphas_cumprod_sqrt.to(input.device)
@@ -313,19 +318,25 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
 
             diff_loss = self.get_loss(model_output, input, w)
 
-            # Normalize SF loss to same scale as diffusion loss (detached scaling)
-            if sf_total.requires_grad:
-                scale = diff_loss.detach() / (sf_total.detach() + 1e-8)
-                sf_total = sf_total * scale
+            # Fixed SF loss weight (replaces old dynamic scaling that made lambdas ineffective)
+            raw_sf = sf_total.detach().float().item()
+            sf_total = sf_total * self.lambda_sf
 
-            # Store loss breakdown for logging
-            self._last_loss_breakdown = {}
+            # Store loss breakdown for logging (include raw sf_total and ratio for diagnostics)
+            self._last_loss_breakdown = {
+                "debug/raw_sf_total": raw_sf,
+                "debug/diff_loss": diff_loss.detach().float().mean().item(),
+                "debug/sf_diff_ratio": (raw_sf * self.lambda_sf) / (diff_loss.detach().float().mean().item() + 1e-8),
+            }
             if 'l_align' in locals():
                 self._last_loss_breakdown["sf/L_align"] = l_align.detach().float().item()
             if 'l_slow' in locals():
                 self._last_loss_breakdown["sf/L_slow"] = l_slow.detach().float().item()
             if 'l_fast' in locals():
                 self._last_loss_breakdown["sf/L_fast"] = l_fast.detach().float().item()
+            if "fast_losses" in locals():
+                for fk, fv in fast_losses.items():
+                    self._last_loss_breakdown["sf/" + fk] = fv.detach().float().item()
             if 'l_aux' in locals():
                 self._last_loss_breakdown["sf/L_aux"] = l_aux.detach().float().item()
             if 'l_guide' in locals():
@@ -342,11 +353,14 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             self._last_loss_breakdown["sf/L_slow"] = l_slow.detach().float().item()
         if 'l_fast' in locals():
             self._last_loss_breakdown["sf/L_fast"] = l_fast.detach().float().item()
+            if "fast_losses" in locals():
+                for fk, fv in fast_losses.items():
+                    self._last_loss_breakdown["sf/" + fk] = fv.detach().float().item()
         if 'l_aux' in locals():
             self._last_loss_breakdown["sf/L_aux"] = l_aux.detach().float().item()
         if 'l_guide' in locals():
             self._last_loss_breakdown["sf/L_guide"] = l_guide.detach().float().item()
         self._last_loss_breakdown["sf/total"] = sf_total.detach().float().item()
 
-        # For branch_pretrain / fusion stages: return SF loss only (no diffusion)
+        # For branch_pretrain stage: return SF loss only (no diffusion)
         return sf_total.to(input.dtype)
