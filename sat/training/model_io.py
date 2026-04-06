@@ -293,7 +293,8 @@ def load_checkpoint(model, args, load_path=None, prefix='', specific_iteration=N
                 torch.distributed.get_rank(), checkpoint_name))
             
     # load state_dict into CPU        
-    sd = torch.load(checkpoint_name, map_location='cpu', weights_only=False)
+    # mmap=True: share checkpoint pages across DDP ranks, saving ~32GB * (N-1) CPU memory
+    sd = torch.load(checkpoint_name, map_location='cpu', weights_only=False, mmap=True)
 
     # if given `prefix`, load a speficic prefix in the checkpoint, e.g. encoder
     new_sd = {'module':{}}
@@ -311,6 +312,15 @@ def load_checkpoint(model, args, load_path=None, prefix='', specific_iteration=N
         module = model
 
     # only load module, other hyperparameters are just for recording.
+    # Filter out keys with shape mismatch (e.g., after architecture changes)
+    model_state = module.state_dict()
+    keys_to_skip = []
+    for k, v in sd['module'].items():
+        if k in model_state and v.shape != model_state[k].shape:
+            print_rank0('Skipping key %s: ckpt shape %s != model shape %s' % (k, v.shape, model_state[k].shape))
+            keys_to_skip.append(k)
+    for k in keys_to_skip:
+        del sd['module'][k]
     missing_keys, unexpected_keys = module.load_state_dict(sd['module'], strict=False)
     if len(unexpected_keys) > 0:
         print_rank0(

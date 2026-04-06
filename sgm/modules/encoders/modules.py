@@ -114,8 +114,14 @@ class GeneralConditioner(nn.Module):
         self.cor_embs = cor_embs
         self.cor_p = cor_p
 
+        # Only load SigLIP when CLIP loss is active (mode=="train"); saves ~4.5GB/process
         from local_config import get_paths
-        self.siglip_model = AutoModel.from_pretrained(get_paths()["siglip2"])
+        _needs_siglip = any(getattr(e, 'mode', 'infer') == 'train' for e in self.embedders)
+        if _needs_siglip:
+            self.siglip_model = AutoModel.from_pretrained(get_paths()["siglip2"])
+        else:
+            self.siglip_model = None
+            print("[GeneralConditioner] SigLIP skipped (mode!=train, saving ~4.5GB)")
 
 
     def possibly_get_ucg_val(self, embedder: AbstractEmbModel, batch: Dict) -> Dict:

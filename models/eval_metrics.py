@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from typing import List, Optional, Tuple
 from transformers import ViTImageProcessor, ViTForImageClassification
@@ -12,6 +13,18 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 
 logging.set_verbosity_error()
 
+# Default HuggingFace cache directory (GPU nodes have no internet, use pre-downloaded models)
+HF_CACHE_DIR = os.path.expanduser('~/.cache/huggingface/hub')
+
+def _resolve_model_path(model_id):
+    """Resolve HuggingFace model ID to local snapshot path if cached."""
+    cache_model_dir = os.path.join(HF_CACHE_DIR, 'models--' + model_id.replace('/', '--'))
+    snapshot_dir = os.path.join(cache_model_dir, 'snapshots')
+    if os.path.isdir(snapshot_dir):
+        snapshots = os.listdir(snapshot_dir)
+        if snapshots:
+            return os.path.join(snapshot_dir, snapshots[0])
+    return model_id  # fallback to original ID (will try network)
 
 # ==================== Batched feature extraction ====================
 
@@ -90,20 +103,24 @@ def _batch_videomae_logits(videos_np, processor, model, device, batch_size=16):
 
 # ==================== Model loaders (load once, reuse) ====================
 
-def load_vit_model(cache_dir='.cache', device='cuda'):
+def load_vit_model(cache_dir=None, device='cuda'):
     """Load ViT model and processor once."""
-    processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224', cache_dir=cache_dir)
-    model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224',
-                                                      cache_dir=cache_dir).to(device, torch.float16)
+    if cache_dir is None:
+        cache_dir = os.path.expanduser('~/.cache/huggingface/hub')
+    vit_path = _resolve_model_path('google/vit-base-patch16-224')
+    processor = ViTImageProcessor.from_pretrained(vit_path)
+    model = ViTForImageClassification.from_pretrained(vit_path).to(device, torch.float16)
     model.eval()
     return processor, model
 
 
-def load_clip_model(cache_dir='.cache', device='cuda'):
+def load_clip_model(cache_dir=None, device='cuda'):
     """Load CLIP model and processor once."""
-    processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32", cache_dir=cache_dir)
-    model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32",
-                                                          cache_dir=cache_dir).to(device, torch.float16)
+    if cache_dir is None:
+        cache_dir = os.path.expanduser('~/.cache/huggingface/hub')
+    clip_path = _resolve_model_path('openai/clip-vit-base-patch32')
+    processor = AutoProcessor.from_pretrained(clip_path)
+    model = CLIPVisionModelWithProjection.from_pretrained(clip_path).to(device, torch.float16)
     model.eval()
     return processor, model
 
@@ -183,11 +200,9 @@ def video_classify_metric(
 ):
     for nway in n_way:
         assert nway > top_k
-    processor = VideoMAEImageProcessor.from_pretrained('MCG-NJU/videomae-base-finetuned-kinetics',
-                                                       cache_dir=cache_dir)
-    model = VideoMAEForVideoClassification.from_pretrained('MCG-NJU/videomae-base-finetuned-kinetics',
-                                                           num_frames=num_frames,
-                                                           cache_dir=cache_dir).to(device, torch.float16)
+    vmae_path = _resolve_model_path('MCG-NJU/videomae-base-finetuned-kinetics')
+    processor = VideoMAEImageProcessor.from_pretrained(vmae_path)
+    model = VideoMAEForVideoClassification.from_pretrained(vmae_path, num_frames=num_frames).to(device, torch.float16)
     model.eval()
 
     print(f'    [video_classify] batch computing logits for {len(pred_videos)} videos...')
@@ -349,7 +364,7 @@ def vifi_score(
     import open_clip
     try:
         model, _, preprocess = open_clip.create_model_and_transforms(
-            'ViT-B-16', pretrained='openai', cache_dir=cache_dir
+            'ViT-B-16', pretrained='openai', cache_dir=HF_CACHE_DIR
         )
     except RuntimeError as e:
         print(f'  [VIFI-Score] Model download failed, skipping: {e}')
@@ -468,8 +483,9 @@ def dino_temporal_consistency(
 ):
     """DTC: DINO Temporal Consistency."""
     from transformers import ViTModel, ViTImageProcessor as DinoProcessor
-    dino_processor = DinoProcessor.from_pretrained("facebook/dino-vitb16", cache_dir=cache_dir)
-    dino_model = ViTModel.from_pretrained("facebook/dino-vitb16", cache_dir=cache_dir).to(device, torch.float16)
+    dino_path = _resolve_model_path('facebook/dino-vitb16')
+    dino_processor = DinoProcessor.from_pretrained(dino_path)
+    dino_model = ViTModel.from_pretrained(dino_path).to(device, torch.float16)
     dino_model.eval()
 
     n, t = pred_videos.shape[:2]

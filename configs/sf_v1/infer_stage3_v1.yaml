@@ -1,0 +1,11 @@
+args:
+  latent_channels: 16
+  mode: inference
+  load: ckpts_5b/sf_v1_stage3_joint-04-04-12-33
+  batch_size: 1
+  sampling_image_size: [480, 720]
+  sampling_num_frames: 13
+  sampling_fps: 8
+  fp16: false
+  bf16: true
+  force_inference: true

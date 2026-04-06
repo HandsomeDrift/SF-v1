@@ -1,23 +1,23 @@
 args:
   checkpoint_activations: true
   eval_batch_size: 1
-  eval_interval: 200
+  eval_interval: 100
   eval_iters: 1
-  experiment_name: sf_v1_cur_1b
+  experiment_name: sf_v1_stage2_mini
   force_train: true
-  load: ckpts_5b/sf_v1_cur_1a-04-01-15-58
+  load: ckpts_5b/sf_v1_p1_full_v2-04-03-13-44
   log_interval: 20
   mode: finetune
   model_parallel_size: 1
   no_load_rng: true
-  num_workers: 4
-  only_log_video_latents: false
+  num_workers: 2
+  only_log_video_latents: true
   save: ckpts_5b
-  save_interval: 1000
+  save_interval: 999999
   split: 1,0,0
   train_data:
-  - __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_train_va.json
-  train_iters: 3000
+  - __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_train_va_mini500.json
+  train_iters: 500
   valid_data:
   - __LOCAL_CONFIG_DATASET_ROOT__/sub-0005_test_va.json
 data:
@@ -28,6 +28,15 @@ data:
     video_size:
     - 480
     - 720
+    sf_target_keys:
+    - keyframe_img_emb
+    - scene_text_emb
+    - flow_token_pca
+    - dyn_class_3
+    - motion_dir_8
+    - ofs_log_zscore
+    - temporal_frame_embs
+    - flow_mag_traj
   target: data_video.BrainDataset
 deepspeed:
   activation_checkpointing:
@@ -37,7 +46,7 @@ deepspeed:
     enabled: true
   fp16:
     enabled: false
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 2
   gradient_clipping: 0.1
   hysteresis: 2
   loss_scale: 0
@@ -66,11 +75,18 @@ deepspeed:
     reduce_scatter: true
     stage: 2
 model:
-  freeze_fast_branch: false
+  not_trainable_prefixes:
+  - all
   freeze_slow_branch: true
+  freeze_fast_branch: true
+  unfreeze_fusion: true
   loss_fn_config:
     params:
+      training_stage: fusion
       sf_loss_config:
-        lambda_mot: 0.0
-        lambda_tc: 0.0
-      training_stage: branch_pretrain
+        lambda_distill_cls: 0.2
+        lambda_distill_spatial: 0.2
+        lambda_temporal_delta: 1.0
+        lambda_temporal_abs: 0.2
+        lambda_flow_traj: 0.3
+        lambda_dyn: 0.1

@@ -412,12 +412,18 @@ def get_model(args, model_cls, **kwargs):
         params_dtype = kwargs.pop('params_dtype')
 
     from sat.helpers import check_if_zero3
+    # Set default dtype to reduce peak CPU memory during model creation
+    # (8 ranks x 8B params x 4 bytes fp32 = 256GB > 251GB available)
+    _prev_dtype = torch.get_default_dtype()
+    if params_dtype != torch.float32:
+        torch.set_default_dtype(params_dtype)
     if check_if_zero3(args):
         import deepspeed
         with deepspeed.zero.Init():
             model = model_cls(args, params_dtype=params_dtype, **kwargs)
     else:
         model = model_cls(args, params_dtype=params_dtype, **kwargs)
+    torch.set_default_dtype(_prev_dtype)
 
     if mpu.get_data_parallel_rank() == 0:
         print_all(' > number of parameters on model parallel rank {}: {}'.format(
