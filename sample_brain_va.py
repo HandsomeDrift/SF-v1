@@ -133,6 +133,12 @@ def sampling_main(args, model_cls):
     json_data = json.load(open(args.jsonpath,"r"))[:]
 
     sample_func = model.sample
+    sdedit_strength = getattr(args, 'sdedit_strength', 1.0)
+    use_dana = getattr(args, 'use_dana', False)
+    if sdedit_strength < 1.0:
+        print(f"[Alpha-Guidance] sdedit_strength={sdedit_strength}, skipping {int((1-sdedit_strength)*51)} early steps")
+    if use_dana:
+        print("[DANA] Dynamic-Aware Noise Adding enabled")
     num_samples = [1]
     force_uc_zero_embeddings = ["fmri"]
     # T = 9
@@ -197,6 +203,15 @@ def sampling_main(args, model_cls):
                 if not k == "crossattn":
                     c[k], uc[k] = map(lambda y: y[k][: math.prod(num_samples)].to("cuda"), (c, uc))
 
+            # DANA: extract flow_traj_pred from brain embedder
+            dana_beta = None
+            if use_dana:
+                brain_embedder = model.conditioner.embedders[0]
+                if hasattr(brain_embedder, '_last_fast_out') and 'flow_traj_pred' in brain_embedder._last_fast_out:
+                    flow_traj = brain_embedder._last_fast_out['flow_traj_pred']  # (B, T_pred)
+                    # Normalize to [0, 1] range using sigmoid
+                    dana_beta = torch.sigmoid(flow_traj - flow_traj.mean())  # center then sigmoid
+
             for index in range(args.batch_size):
 
                 samples_z = sample_func(
@@ -204,6 +219,8 @@ def sampling_main(args, model_cls):
                     uc=uc,
                     batch_size=1,
                     shape=(T, C, H // F, W // F),
+                    sdedit_strength=sdedit_strength,
+                    dana_beta=dana_beta,
                 ).to("cuda")
 
                 samples_z = samples_z.permute(0, 2, 1, 3, 4).contiguous()
@@ -225,10 +242,16 @@ if __name__ == "__main__":
         os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
     py_parser = argparse.ArgumentParser(add_help=False)
     py_parser.add_argument('--output_dir', type=str, required=True)
+    py_parser.add_argument('--sdedit_strength', type=float, default=1.0,
+                           help='SDEdit strength: 1.0=full denoising, 0.7=skip 30%% early steps')
+    py_parser.add_argument('--use_dana', action='store_true', default=False,
+                           help='Enable DANA dynamic noise (motion-aware noise mixing)')
     known, args_list = py_parser.parse_known_args()
 
     args = get_args(args_list)
     args.output_dir = known.output_dir
+    args.sdedit_strength = known.sdedit_strength
+    args.use_dana = known.use_dana
     del args.deepspeed_config
     args.model_config.first_stage_config.params.cp_size = 1
     args.model_config.network_config.params.transformer_args.model_parallel_size = 1

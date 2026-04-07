@@ -291,11 +291,33 @@ class SATVideoDiffusionEngineBrain(nn.Module):
         prefix=None,
         concat_images=None,
         ofs=None,
+        sdedit_strength=1.0,
+        init_latent=None,
+        dana_beta=None,
         **kwargs,
     ):
         randn = torch.randn(batch_size, *shape).to(torch.float32).to(self.device)
         if hasattr(self, "seeded_noise"):
             randn = self.seeded_noise(randn)
+
+        # DANA: Dynamic-Aware Noise Adding
+        # beta per frame controls static/diverse noise mix
+        # beta=0 → all static (shared across frames), beta=1 → all diverse (independent)
+        if dana_beta is not None:
+            T_latent = shape[0]  # latent temporal dim (13)
+            eps_static = randn[:, 0:1].expand_as(randn)  # same noise repeated
+            eps_diverse = randn  # independent noise per frame
+            # dana_beta: (B, T) from flow_traj_pred, expand to latent shape
+            beta = dana_beta  # (B, T_pred) e.g. (1, 9)
+            # Interpolate to latent temporal dim if needed
+            if beta.shape[1] != T_latent:
+                beta = torch.nn.functional.interpolate(
+                    beta.unsqueeze(1), size=T_latent, mode='linear', align_corners=False
+                ).squeeze(1)  # (B, T_latent)
+            # Reshape for broadcasting: (B, T, 1, 1, 1)
+            beta = beta.view(batch_size, T_latent, 1, 1, 1).to(randn.device, randn.dtype)
+            beta = beta.clamp(0.0, 1.0)
+            randn = beta * eps_diverse + (1 - beta) * eps_static
 
         if prefix is not None:
             randn = torch.cat([prefix, randn[:, prefix.shape[1] :]], dim=1)
@@ -314,7 +336,14 @@ class SATVideoDiffusionEngineBrain(nn.Module):
             self.model, input, sigma, c, concat_images=concat_images, **addtional_model_inputs
         )
 
-        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb, ofs=ofs)
+        # Alpha-Guidance: compute start_step from sdedit_strength
+        start_step = 0
+        if sdedit_strength < 1.0:
+            num_steps = self.sampler.num_steps + 1
+            start_step = int((1.0 - sdedit_strength) * num_steps)
+
+        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb, ofs=ofs,
+                               start_step=start_step, init_latent=init_latent)
         samples = samples.to(self.dtype)
         return samples
 
@@ -706,11 +735,33 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
         prefix=None,
         concat_images=None,
         ofs=None,
+        sdedit_strength=1.0,
+        init_latent=None,
+        dana_beta=None,
         **kwargs,
     ):
         randn = torch.randn(batch_size, *shape).to(torch.float32).to(self.device)
         if hasattr(self, "seeded_noise"):
             randn = self.seeded_noise(randn)
+
+        # DANA: Dynamic-Aware Noise Adding
+        # beta per frame controls static/diverse noise mix
+        # beta=0 → all static (shared across frames), beta=1 → all diverse (independent)
+        if dana_beta is not None:
+            T_latent = shape[0]  # latent temporal dim (13)
+            eps_static = randn[:, 0:1].expand_as(randn)  # same noise repeated
+            eps_diverse = randn  # independent noise per frame
+            # dana_beta: (B, T) from flow_traj_pred, expand to latent shape
+            beta = dana_beta  # (B, T_pred) e.g. (1, 9)
+            # Interpolate to latent temporal dim if needed
+            if beta.shape[1] != T_latent:
+                beta = torch.nn.functional.interpolate(
+                    beta.unsqueeze(1), size=T_latent, mode='linear', align_corners=False
+                ).squeeze(1)  # (B, T_latent)
+            # Reshape for broadcasting: (B, T, 1, 1, 1)
+            beta = beta.view(batch_size, T_latent, 1, 1, 1).to(randn.device, randn.dtype)
+            beta = beta.clamp(0.0, 1.0)
+            randn = beta * eps_diverse + (1 - beta) * eps_static
 
         if prefix is not None:
             randn = torch.cat([prefix, randn[:, prefix.shape[1] :]], dim=1)
@@ -729,7 +780,14 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
             self.model, input, sigma, c, concat_images=concat_images, **addtional_model_inputs
         )
 
-        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb, ofs=ofs)
+        # Alpha-Guidance: compute start_step from sdedit_strength
+        start_step = 0
+        if sdedit_strength < 1.0:
+            num_steps = self.sampler.num_steps + 1
+            start_step = int((1.0 - sdedit_strength) * num_steps)
+
+        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb, ofs=ofs,
+                               start_step=start_step, init_latent=init_latent)
         samples = samples.to(self.dtype)
         return samples
 
