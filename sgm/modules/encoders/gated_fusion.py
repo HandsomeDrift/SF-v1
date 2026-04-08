@@ -6,7 +6,7 @@ to directly influence the output instead of being squeezed through a bottleneck.
 """
 import torch
 import torch.nn as nn
-from sgm.modules.encoders.common import CrossAttention, TransformerEncoderLayer, FeedForward
+from sgm.modules.encoders.common import CrossAttention, TransformerEncoderLayer
 
 
 class CrossModalGatedFusion(nn.Module):
