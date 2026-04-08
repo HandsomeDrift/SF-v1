@@ -136,7 +136,8 @@ def sampling_main(args, model_cls):
     sdedit_strength = getattr(args, 'sdedit_strength', 1.0)
     use_dana = getattr(args, 'use_dana', False)
     if sdedit_strength < 1.0:
-        print(f"[Alpha-Guidance] sdedit_strength={sdedit_strength}, skipping {int((1-sdedit_strength)*51)} early steps")
+        renoise_at = int((1-sdedit_strength) * 51)
+        print(f"[Alpha-Guidance] mid-point re-noising at step {renoise_at}/51 (strength={sdedit_strength})")
     if use_dana:
         print("[DANA] Dynamic-Aware Noise Adding enabled")
     num_samples = [1]
@@ -220,7 +221,7 @@ def sampling_main(args, model_cls):
                     batch_size=1,
                     shape=(T, C, H // F, W // F),
                     sdedit_strength=sdedit_strength,
-                    dana_beta=dana_beta,
+                    dana_beta=dana_beta if use_dana else None,
                 ).to("cuda")
 
                 samples_z = samples_z.permute(0, 2, 1, 3, 4).contiguous()

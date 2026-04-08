@@ -724,29 +724,25 @@ class VPSDEDPMPP2MSampler(VideoDDIMSampler):
         return x, denoised
 
     def __call__(self, denoiser, x, cond, uc=None, num_steps=None, scale=None, scale_emb=None, ofs=None,
-                 start_step=0, init_latent=None): # 1020 + alpha-guidance
+                 renoise_step=0): # 1020 + alpha-guidance
         x, s_in, alpha_cumprod_sqrt, num_sigmas, cond, uc, timesteps = self.prepare_sampling_loop(
             x, cond, uc, num_steps
         )
-
-        # Alpha-Guidance / SDEdit: start from intermediate timestep
-        if start_step > 0 and start_step < num_sigmas - 1:
-            alpha_t = alpha_cumprod_sqrt[start_step]
-            if init_latent is not None:
-                # SDEdit mode: add noise to init_latent at intermediate level
-                noise = torch.randn_like(init_latent)
-                x = alpha_t * init_latent + (1 - alpha_t ** 2) ** 0.5 * noise
-            else:
-                # No prior: scale pure noise to intermediate noise level
-                x = (1 - alpha_t ** 2) ** 0.5 * x
 
         if self.fixed_frames > 0:
             prefix_frames = x[:, :self.fixed_frames]
         old_denoised = None
         for i in self.get_sigma_gen(num_sigmas):
-            # Skip steps before start_step
-            if i < start_step:
-                continue
+
+            # Alpha-Guidance: mid-point re-noising using predicted x_0 as draft prior.
+            # old_denoised is the model's clean x_0 prediction from step i-1.
+            # Forward-noise it to current noise level, then continue denoising.
+            # This is equivalent to SDEdit with the draft as prior.
+            if renoise_step > 0 and i == renoise_step and old_denoised is not None:
+                alpha_t = alpha_cumprod_sqrt[i]
+                noise = torch.randn_like(old_denoised)
+                x = alpha_t * old_denoised + (1 - alpha_t ** 2) ** 0.5 * noise
+                old_denoised = None  # reset DPM++ 2nd-order history
 
             if self.fixed_frames > 0:
                 if self.sdedit:
@@ -756,8 +752,8 @@ class VPSDEDPMPP2MSampler(VideoDDIMSampler):
                 else:
                     x = torch.cat([prefix_frames, x[:, self.fixed_frames:]], dim=1)
             x, old_denoised = self.sampler_step(
-                old_denoised if i > start_step else None,  # Reset old_denoised at start
-                None if i == 0 or i == start_step else s_in * alpha_cumprod_sqrt[i - 1],
+                old_denoised,
+                None if i == 0 else s_in * alpha_cumprod_sqrt[i - 1],
                 s_in * alpha_cumprod_sqrt[i],
                 s_in * alpha_cumprod_sqrt[i + 1],
                 denoiser,

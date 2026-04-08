@@ -336,14 +336,17 @@ class SATVideoDiffusionEngineBrain(nn.Module):
             self.model, input, sigma, c, concat_images=concat_images, **addtional_model_inputs
         )
 
-        # Alpha-Guidance: compute start_step from sdedit_strength
-        start_step = 0
+        # Alpha-Guidance: single-pass with mid-point re-noising
+        # At step K (draft boundary), take current x, add noise back, continue denoising.
+        # This keeps the same 50-step schedule/CFG — no num_steps mismatch.
+        renoise_step = 0
         if sdedit_strength < 1.0:
-            num_steps = self.sampler.num_steps + 1
-            start_step = int((1.0 - sdedit_strength) * num_steps)
+            num_steps = self.sampler.num_steps + 1  # schedule length (51)
+            renoise_step = int((1.0 - sdedit_strength) * num_steps)
 
-        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb, ofs=ofs,
-                               start_step=start_step, init_latent=init_latent)
+        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale,
+                               scale_emb=scale_emb, ofs=ofs,
+                               renoise_step=renoise_step)
         samples = samples.to(self.dtype)
         return samples
 
@@ -780,14 +783,17 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
             self.model, input, sigma, c, concat_images=concat_images, **addtional_model_inputs
         )
 
-        # Alpha-Guidance: compute start_step from sdedit_strength
-        start_step = 0
+        # Alpha-Guidance: single-pass with mid-point re-noising
+        # At step K (draft boundary), take current x, add noise back, continue denoising.
+        # This keeps the same 50-step schedule/CFG — no num_steps mismatch.
+        renoise_step = 0
         if sdedit_strength < 1.0:
-            num_steps = self.sampler.num_steps + 1
-            start_step = int((1.0 - sdedit_strength) * num_steps)
+            num_steps = self.sampler.num_steps + 1  # schedule length (51)
+            renoise_step = int((1.0 - sdedit_strength) * num_steps)
 
-        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb, ofs=ofs,
-                               start_step=start_step, init_latent=init_latent)
+        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale,
+                               scale_emb=scale_emb, ofs=ofs,
+                               renoise_step=renoise_step)
         samples = samples.to(self.dtype)
         return samples
 

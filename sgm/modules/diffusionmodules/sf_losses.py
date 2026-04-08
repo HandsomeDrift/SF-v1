@@ -7,36 +7,62 @@ import torch.nn.functional as F
 
 
 class AlignmentLoss(nn.Module):
-    """5-way cross-modal alignment loss (extends existing CLIP loss)."""
+    """5-way cross-modal alignment loss with MoCo queue for bs=1 support.
+
+    P1-4: When queue is provided, uses queue-augmented InfoNCE instead of
+    in-batch-only contrastive (which degenerates to 0 at bs=1).
+    """
     def __init__(self, lambda_fv=1.0, lambda_ft=1.0, lambda_ev=1.0, lambda_et=1.0, lambda_fe=0.5):
         super().__init__()
         self.lambdas = {"fv": lambda_fv, "ft": lambda_ft, "ev": lambda_ev, "et": lambda_et, "fe": lambda_fe}
         self.logit_scale = nn.Parameter(torch.ones([]) * 2.6593)
 
-    def contrastive(self, feat_a, feat_b):
+    def contrastive(self, feat_a, feat_b, feat_b_queue=None):
+        """InfoNCE with optional queue negatives.
+        feat_a: (B, D) anchors
+        feat_b: (B, D) positive targets
+        feat_b_queue: (K, D) queue of past targets (optional)
+        """
         feat_a = F.normalize(feat_a, dim=-1)
         feat_b = F.normalize(feat_b, dim=-1)
         scale = self.logit_scale.exp().clamp(max=100.0)
-        logits_ab = scale * feat_a @ feat_b.T
-        labels = torch.arange(feat_a.shape[0], device=feat_a.device)
-        return (F.cross_entropy(logits_ab, labels) + F.cross_entropy(logits_ab.T, labels)) / 2
 
-    def forward(self, slow_out, fast_out, video_embed=None, text_embed=None):
+        if feat_b_queue is not None and feat_b_queue.shape[0] > 0:
+            # Queue-augmented: positives + queue negatives
+            feat_b_all = torch.cat([feat_b, feat_b_queue.to(feat_b.device)], dim=0)  # (B+K, D)
+            logits = scale * feat_a @ feat_b_all.T  # (B, B+K)
+            labels = torch.arange(feat_a.shape[0], device=feat_a.device)  # positive = first B
+            return F.cross_entropy(logits, labels)
+        else:
+            # Original in-batch contrastive (broken at bs=1)
+            logits_ab = scale * feat_a @ feat_b.T
+            labels = torch.arange(feat_a.shape[0], device=feat_a.device)
+            return (F.cross_entropy(logits_ab, labels) + F.cross_entropy(logits_ab.T, labels)) / 2
+
+    def forward(self, slow_out, fast_out, video_embed=None, text_embed=None, queues=None):
+        """
+        queues: optional dict with keys 'fmri', 'eeg', 'video', 'text', each (K, 1152)
+        """
         fmri_cls = slow_out["fmri_cls"]
         eeg_cls = fast_out["eeg_cls"]
         losses = {}
         total = fmri_cls.new_tensor(0.0)
 
+        vq = queues.get("video") if queues else None
+        tq = queues.get("text") if queues else None
+        eq = queues.get("eeg") if queues else None
+        fq = queues.get("fmri") if queues else None
+
         if video_embed is not None:
-            losses["L_fv"] = self.contrastive(fmri_cls, video_embed)
-            losses["L_ev"] = self.contrastive(eeg_cls, video_embed)
+            losses["L_fv"] = self.contrastive(fmri_cls, video_embed, vq)
+            losses["L_ev"] = self.contrastive(eeg_cls, video_embed, vq)
             total = total + self.lambdas["fv"] * losses["L_fv"] + self.lambdas["ev"] * losses["L_ev"]
         if text_embed is not None:
-            losses["L_ft"] = self.contrastive(fmri_cls, text_embed)
-            losses["L_et"] = self.contrastive(eeg_cls, text_embed)
+            losses["L_ft"] = self.contrastive(fmri_cls, text_embed, tq)
+            losses["L_et"] = self.contrastive(eeg_cls, text_embed, tq)
             total = total + self.lambdas["ft"] * losses["L_ft"] + self.lambdas["et"] * losses["L_et"]
 
-        losses["L_fe"] = self.contrastive(fmri_cls, eeg_cls)
+        losses["L_fe"] = self.contrastive(fmri_cls, eeg_cls, eq)
         total = total + self.lambdas["fe"] * losses["L_fe"]
         return total, losses
 
@@ -161,14 +187,27 @@ class FastBranchDistillLoss(nn.Module):
                 losses["L_temporal_abs"] = F.mse_loss(pred_tokens, gt_frame_embs)
                 total = total + self.lambda_temporal_abs * losses["L_temporal_abs"]
 
-            # L_flow_traj: MSE between predicted flow trajectory and GT flow magnitude
+            # L_flow_traj: regression MSE or codebook classification CE
             if "flow_traj_pred" in fast_out and "gt_flow_mag_traj" in targets:
-                flow_pred = fast_out["flow_traj_pred"]       # (B, T)
-                flow_gt = targets["gt_flow_mag_traj"]        # (B, T)
-                T_pred = flow_pred.shape[1]
-                T_gt = flow_gt.shape[1]
-                T = min(T_pred, T_gt)
-                losses["L_flow_traj"] = F.mse_loss(flow_pred[:, :T], flow_gt[:, :T])
+                flow_pred = fast_out["flow_traj_pred"]
+                flow_gt = targets["gt_flow_mag_traj"]        # (B, T) continuous values
+
+                if flow_pred.ndim == 3:
+                    # P1-3 Codebook mode: flow_pred is (B, T, K) logits
+                    K = flow_pred.shape[-1]
+                    T = min(flow_pred.shape[1], flow_gt.shape[1])
+                    # Quantize GT to nearest codebook bin (uniform bins in [0, max_val])
+                    flow_gt_clip = flow_gt[:, :T].clamp(0)
+                    max_val = flow_gt_clip.max().clamp(min=1e-6)
+                    bin_indices = (flow_gt_clip / max_val * (K - 1)).long().clamp(0, K - 1)
+                    losses["L_flow_traj"] = F.cross_entropy(
+                        flow_pred[:, :T].reshape(-1, K), bin_indices.reshape(-1)
+                    )
+                else:
+                    # Regression mode: flow_pred is (B, T) scalars
+                    T = min(flow_pred.shape[1], flow_gt.shape[1])
+                    losses["L_flow_traj"] = F.mse_loss(flow_pred[:, :T], flow_gt[:, :T])
+
                 total = total + self.lambda_flow_traj * losses["L_flow_traj"]
 
         # L_struct: Structural similarity loss (DynaMind-inspired)

@@ -251,11 +251,16 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
         # Initialize loss accumulator matching input dtype (bf16)
         sf_total = input.new_tensor(0.0)
 
-        # Alignment loss
+        # Alignment loss (P1-4: pass MoCo queues for bs=1 contrastive)
         if "fmri_cls" in slow_out and "eeg_cls" in fast_out:
             video_embed = targets.get("gt_keyframe_embed", None)
             text_embed = targets.get("gt_text_embed", None)
-            l_align, _ = self.align_loss(slow_out, fast_out, video_embed, text_embed)
+            queues = None
+            brain_embedder = conditioner.embedders[0] if conditioner is not None else None
+            if brain_embedder is not None and hasattr(brain_embedder, 'get_queues'):
+                queues = brain_embedder.get_queues()
+                brain_embedder.update_target_queues(video_embed, text_embed)
+            l_align, _ = self.align_loss(slow_out, fast_out, video_embed, text_embed, queues=queues)
             sf_total = sf_total + l_align
 
         # Slow branch loss

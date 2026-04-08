@@ -65,11 +65,14 @@ class DecoderLayer(nn.Module):
 
 class TemporalDynamicsDecoder(nn.Module):
     def __init__(self, input_dim=2048, d_model=512, nhead=8, num_layers=4,
-                 t_out=9, out_dim=1152, dropout=0.1, use_causal_mask=False):
+                 t_out=9, out_dim=1152, dropout=0.1, use_causal_mask=False,
+                 sparse_attn_drop=0.0, flow_codebook_k=0):
         super().__init__()
         self.t_out = t_out
         self.d_model = d_model
         self.use_causal_mask = use_causal_mask
+        self.sparse_attn_drop = sparse_attn_drop  # P1-1: random sparse mask ratio
+        self.flow_codebook_k = flow_codebook_k    # P1-3: 0=regression, >0=classification
 
         self.temporal_queries = nn.Parameter(torch.randn(1, t_out, d_model) * 0.02)
         self.global_query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
@@ -84,10 +87,17 @@ class TemporalDynamicsDecoder(nn.Module):
         self.temporal_out_proj = nn.Linear(d_model, out_dim)
         self.global_out_proj = nn.Linear(d_model, out_dim)
 
-        self.flow_traj_head = nn.Sequential(
-            nn.Linear(d_model, d_model // 4), nn.GELU(),
-            nn.Linear(d_model // 4, 1),
-        )
+        # P1-3: Flow trajectory — regression (K=0) or codebook classification (K>0)
+        if flow_codebook_k > 0:
+            self.flow_traj_head = nn.Sequential(
+                nn.Linear(d_model, d_model // 4), nn.GELU(),
+                nn.Linear(d_model // 4, flow_codebook_k),  # K-class logits per frame
+            )
+        else:
+            self.flow_traj_head = nn.Sequential(
+                nn.Linear(d_model, d_model // 4), nn.GELU(),
+                nn.Linear(d_model // 4, 1),  # scalar regression
+            )
 
     def forward(self, eeg_spatial):
         B = eeg_spatial.shape[0]
@@ -99,9 +109,19 @@ class TemporalDynamicsDecoder(nn.Module):
 
         # Causal mask for self-attention: temporal queries can only attend to earlier ones
         causal_mask = None
+        S = queries.shape[1]  # T_out + 1
         if self.use_causal_mask:
-            S = queries.shape[1]  # T_out + 1
             causal_mask = torch.triu(torch.ones(S, S, device=queries.device, dtype=torch.bool), diagonal=1)
+
+        # P1-1: Sparse attention mask — randomly drop attend positions during training
+        # Prevents temporal decoder from learning shortcut patterns (Mind-Animator)
+        if self.sparse_attn_drop > 0 and self.training:
+            sparse_mask = torch.rand(S, S, device=queries.device) < self.sparse_attn_drop
+            sparse_mask.diagonal().fill_(False)  # always attend to self
+            if causal_mask is not None:
+                causal_mask = causal_mask | sparse_mask
+            else:
+                causal_mask = sparse_mask
 
         for layer in self.decoder_layers:
             queries = layer(queries, memory, causal_mask=causal_mask)
@@ -112,6 +132,11 @@ class TemporalDynamicsDecoder(nn.Module):
 
         temporal_tokens = self.temporal_out_proj(t_out)
         global_dyn_token = self.global_out_proj(g_out)
-        flow_traj_pred = self.flow_traj_head(t_out).squeeze(-1)
+
+        # P1-3: flow trajectory — logits (B, T, K) for classification, or (B, T) for regression
+        if self.flow_codebook_k > 0:
+            flow_traj_pred = self.flow_traj_head(t_out)  # (B, T, K)
+        else:
+            flow_traj_pred = self.flow_traj_head(t_out).squeeze(-1)  # (B, T)
 
         return temporal_tokens, global_dyn_token, flow_traj_pred

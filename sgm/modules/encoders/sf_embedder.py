@@ -68,6 +68,8 @@ class SFBrainEmbedder(AbstractEmbModel):
         temporal_d_model=512,
         use_temporal_guidance=False,
         use_causal_mask=False,
+        sparse_attn_drop=0.0,
+        flow_codebook_k=0,
         # Training mode
         mode="infer",
         # Checkpoint
@@ -141,6 +143,8 @@ class SFBrainEmbedder(AbstractEmbModel):
                 num_temporal_queries=num_temporal_queries,
                 temporal_d_model=temporal_d_model,
                 use_causal_mask=use_causal_mask,
+                sparse_attn_drop=sparse_attn_drop,
+                flow_codebook_k=flow_codebook_k,
             )
 
         if use_gated_fusion and use_slow_branch and use_fast_branch:
@@ -167,6 +171,19 @@ class SFBrainEmbedder(AbstractEmbModel):
                 mot_input_dim=2048,  # v2: distilled EEG pooled feature dim
                 use_temporal_guidance=use_temporal_guidance,
             )
+
+        # P1-4: MoCo queue for contrastive alignment at bs=1
+        self.queue_size = 512
+        self.register_buffer("queue_fmri", torch.randn(self.queue_size, clip_dim))
+        self.register_buffer("queue_eeg", torch.randn(self.queue_size, clip_dim))
+        self.register_buffer("queue_video", torch.randn(self.queue_size, clip_dim))
+        self.register_buffer("queue_text", torch.randn(self.queue_size, clip_dim))
+        self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+        # Normalize initial random queues
+        self.queue_fmri = F.normalize(self.queue_fmri, dim=1)
+        self.queue_eeg = F.normalize(self.queue_eeg, dim=1)
+        self.queue_video = F.normalize(self.queue_video, dim=1)
+        self.queue_text = F.normalize(self.queue_text, dim=1)
 
         # Apply branch freezing for curriculum training (C-02 fix)
         if self.freeze_slow_branch and hasattr(self, 'slow_branch'):
@@ -219,6 +236,10 @@ class SFBrainEmbedder(AbstractEmbModel):
             self._last_fast_out = fast_out
             self._last_alphas = alphas
 
+            # P1-4: Update MoCo queues (training only, no grad)
+            if self.mode == "train":
+                self._update_queues(slow_out, fast_out, batch)
+
             return context, clip_loss
 
         # --- Baseline path (no SF branches) ---
@@ -232,6 +253,41 @@ class SFBrainEmbedder(AbstractEmbModel):
             self._last_fast_out = {"eeg_cls": eeg_cls, "eeg_spatial": eeg_spatial}
             self._last_alphas = {}
             return context, clip_loss
+
+    @torch.no_grad()
+    def _update_queues(self, slow_out, fast_out, batch):
+        """P1-4: Update MoCo queues with current batch embeddings."""
+        B = slow_out["fmri_cls"].shape[0]
+        ptr = int(self.queue_ptr)
+
+        self.queue_fmri[ptr:ptr+B] = F.normalize(slow_out["fmri_cls"].detach().float(), dim=1)
+        self.queue_eeg[ptr:ptr+B] = F.normalize(fast_out["eeg_cls"].detach().float(), dim=1)
+
+        # Video/text embeddings come from targets (may not be available at embedder level)
+        # They'll be updated via update_target_queues() called from loss computation
+        self.queue_ptr[0] = (ptr + B) % self.queue_size
+
+    @torch.no_grad()
+    def update_target_queues(self, video_embed, text_embed):
+        """P1-4: Update video/text queues (called from loss after targets available)."""
+        if video_embed is None and text_embed is None:
+            return
+        B = video_embed.shape[0] if video_embed is not None else text_embed.shape[0]
+        # Use same ptr as brain queues (they advance together)
+        ptr = (int(self.queue_ptr) - B) % self.queue_size
+        if video_embed is not None:
+            self.queue_video[ptr:ptr+B] = F.normalize(video_embed.detach().float(), dim=1)
+        if text_embed is not None:
+            self.queue_text[ptr:ptr+B] = F.normalize(text_embed.detach().float(), dim=1)
+
+    def get_queues(self):
+        """P1-4: Return current queue contents for alignment loss."""
+        return {
+            "fmri": self.queue_fmri.detach(),
+            "eeg": self.queue_eeg.detach(),
+            "video": self.queue_video.detach(),
+            "text": self.queue_text.detach(),
+        }
 
     def _compute_clip_loss(self, batch, siglip_model):
         """Compute 5-way CLIP contrastive loss (same logic as BrainmbedderCLIP)."""

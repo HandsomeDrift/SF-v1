@@ -56,6 +56,8 @@ class FastBranch(nn.Module):
         num_temporal_queries=9,
         temporal_d_model=512,
         use_causal_mask=False,
+        sparse_attn_drop=0.0,
+        flow_codebook_k=0,
     ):
         super().__init__()
         self.eeg_encoder = eeg_encoder
@@ -82,6 +84,8 @@ class FastBranch(nn.Module):
                 out_dim=head_dim,
                 dropout=0.1,
                 use_causal_mask=use_causal_mask,
+                sparse_attn_drop=sparse_attn_drop,
+                flow_codebook_k=flow_codebook_k,
             )
             # Coarse dynamics classification head: global_dyn_token (1152) → 2 classes
             self.coarse_dyn_head = nn.Sequential(
