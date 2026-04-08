@@ -283,7 +283,7 @@ class VideoDiffusionLossSF(VideoDiffusionLoss):
             video_embed = targets.get("gt_keyframe_embed", None)
             text_embed = targets.get("gt_text_embed", None)
             if "z_key" in slow_out and (video_embed is not None or text_embed is not None):
-                l_guide, _ = self.guide_loss(slow_out, fast_out, video_embed, text_embed)
+                l_guide, _ = self.guide_loss(slow_out, fast_out, targets, video_embed, text_embed)
                 sf_total = sf_total + l_guide
 
         # Diffusion loss (stage 2 fusion + stage 3 joint)
