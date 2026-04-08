@@ -117,6 +117,10 @@ model:
             num_temporal_queries: 9
             temporal_d_model: 512
             use_causal_mask: true
+            # P1-1: Sparse attention (0=off, 0.3=recommended)
+            sparse_attn_drop: 0.0
+            # P1-3: Flow codebook (0=regression, 64/128=classification)
+            flow_codebook_k: 0
             # Guidance
             use_temporal_guidance: true
             # Training mode

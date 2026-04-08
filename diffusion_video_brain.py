@@ -82,6 +82,13 @@ class SATVideoDiffusionEngineBrain(nn.Module):
 
         self.denoiser = instantiate_from_config(denoiser_config)
         self.sampler = instantiate_from_config(sampler_config) if sampler_config is not None else None
+        # Phase 1: inject training config overrides into embedder params before instantiation
+        if conditioner_config is not None:
+            for emb_cfg in conditioner_config.get("params", {}).get("emb_models", []):
+                if "sf_embedder" in emb_cfg.get("target", ""):
+                    for k in ["sparse_attn_drop", "flow_codebook_k"]:
+                        if k in model_config:
+                            emb_cfg.setdefault("params", {})[k] = model_config[k]
         self.conditioner = instantiate_from_config(default(conditioner_config, UNCONDITIONAL_CONFIG))
 
         self._init_first_stage(first_stage_config)
@@ -515,6 +522,13 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
 
         self.denoiser = instantiate_from_config(denoiser_config)
         self.sampler = instantiate_from_config(sampler_config) if sampler_config is not None else None
+        # Phase 1: inject training config overrides into embedder params before instantiation
+        if conditioner_config is not None:
+            for emb_cfg in conditioner_config.get("params", {}).get("emb_models", []):
+                if "sf_embedder" in emb_cfg.get("target", ""):
+                    for k in ["sparse_attn_drop", "flow_codebook_k"]:
+                        if k in model_config:
+                            emb_cfg.setdefault("params", {})[k] = model_config[k]
         self.conditioner = instantiate_from_config(default(conditioner_config, UNCONDITIONAL_CONFIG))
 
         self._init_first_stage(first_stage_config)
