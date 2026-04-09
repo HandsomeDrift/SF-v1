@@ -1,24 +1,45 @@
-"""Multi-Guidance Decoder Adapter v3: cross-attention guidance injection.
+"""Multi-Guidance Decoder Adapter v3.1: per-channel cross-attention + alpha weighting.
 
-P2-2 redesign: Replace global vector broadcast with cross-attention.
-Spatial tokens (z_b) query guidance embeddings, allowing different positions
-to selectively attend to different guidance signals.
-
-v2→v3 changes:
-  - Guidance signals stacked as key/value tokens for cross-attention
-  - Spatial positions can selectively attend to relevant guidance
-  - Alpha weights modulate guidance token contributions before attention
+Each guidance signal has its own cross-attention with z_b (spatial selectivity),
+then alpha weights control each channel's contribution via additive residual.
+This avoids the dead-alpha problem while maintaining spatial selectivity.
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
+class GuidanceCrossAttention(nn.Module):
+    """Lightweight single-channel cross-attention: z_b queries one guidance token."""
+    def __init__(self, brain_dim, num_heads=8):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = brain_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.q_proj = nn.Linear(brain_dim, brain_dim)
+        self.k_proj = nn.Linear(brain_dim, brain_dim)
+        self.v_proj = nn.Linear(brain_dim, brain_dim)
+        self.out_proj = nn.Linear(brain_dim, brain_dim)
+
+    def forward(self, query, kv):
+        """query: (B, S, D), kv: (B, 1, D) → (B, S, D)"""
+        B, Sq, D = query.shape
+        Sk = kv.shape[1]
+        H, Dh = self.num_heads, self.head_dim
+        q = self.q_proj(query).reshape(B, Sq, H, Dh).transpose(1, 2)
+        k = self.k_proj(kv).reshape(B, Sk, H, Dh).transpose(1, 2)
+        v = self.v_proj(kv).reshape(B, Sk, H, Dh).transpose(1, 2)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = F.softmax(attn, dim=-1)
+        out = (attn @ v).transpose(1, 2).reshape(B, Sq, D)
+        return self.out_proj(out)
+
+
 class MultiGuidanceAdapter(nn.Module):
     """
-    v3: Cross-attention guidance injection.
-    Guidance signals (keyframe, text, motion, temporal) are projected to tokens,
-    then z_b attends to them via cross-attention for spatial selectivity.
+    v3.1: Per-channel cross-attention + alpha-weighted additive residual.
+    Each guidance channel gets its own cross-attention (spatial selectivity),
+    then alpha controls the contribution (no dead-alpha problem).
     """
     def __init__(
         self,
@@ -41,74 +62,44 @@ class MultiGuidanceAdapter(nn.Module):
         self.use_temporal_guidance = use_temporal_guidance
         self.brain_dim = brain_dim
 
-        # Project each guidance signal to brain_dim tokens
+        # Per-channel projections + cross-attention
         if use_keyframe_guidance:
             self.key_proj = nn.Linear(head_dim, brain_dim)
+            self.key_attn = GuidanceCrossAttention(brain_dim, guidance_num_heads)
+
         if use_text_guidance:
             self.txt_proj = nn.Linear(head_dim, brain_dim)
+            self.txt_attn = GuidanceCrossAttention(brain_dim, guidance_num_heads)
+
         if use_motion_guidance:
             self.mot_proj = nn.Linear(mot_input_dim, brain_dim)
+            self.mot_attn = GuidanceCrossAttention(brain_dim, guidance_num_heads)
+
         if use_temporal_guidance:
             self.temporal_proj = nn.Linear(head_dim, brain_dim)
             self.temporal_gate = nn.Linear(head_dim, 1)
 
-        # Cross-attention: z_b (spatial) queries guidance tokens
-        self.cross_attn_q = nn.Linear(brain_dim, brain_dim)
-        self.cross_attn_k = nn.Linear(brain_dim, brain_dim)
-        self.cross_attn_v = nn.Linear(brain_dim, brain_dim)
-        self.cross_attn_out = nn.Linear(brain_dim, brain_dim)
-        self.num_heads = guidance_num_heads
-        self.head_dim = brain_dim // guidance_num_heads
-        self.scale = self.head_dim ** -0.5
-
-        self.norm_q = nn.LayerNorm(brain_dim)
-        self.norm_kv = nn.LayerNorm(brain_dim)
-
+        self.norm = nn.LayerNorm(brain_dim)
         self.out_proj = nn.Sequential(
             nn.LayerNorm(brain_dim),
             nn.Linear(brain_dim, brain_dim),
         )
 
-    def _cross_attend(self, query, key_value):
-        """Multi-head cross-attention: query (B, Sq, D) attends to key_value (B, Sk, D)."""
-        B, Sq, _ = query.shape
-        Sk = key_value.shape[1]
-        H, Dh = self.num_heads, self.head_dim
-
-        q = self.cross_attn_q(query).reshape(B, Sq, H, Dh).transpose(1, 2)
-        k = self.cross_attn_k(key_value).reshape(B, Sk, H, Dh).transpose(1, 2)
-        v = self.cross_attn_v(key_value).reshape(B, Sk, H, Dh).transpose(1, 2)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = F.softmax(attn, dim=-1)
-        out = (attn @ v).transpose(1, 2).reshape(B, Sq, self.brain_dim)
-        return self.cross_attn_out(out)
-
     def forward(self, z_b, alphas, slow_out, fast_out):
         """
-        Args:
-            z_b: (B, S, brain_dim) fused brain latent
-            alphas: dict of (B, 1) weights
-            slow_out: dict from SlowBranch with z_key, z_txt
-            fast_out: dict from FastBranch with eeg_pooled_proj, global_dyn_token
-        Returns:
-            context: (B, S, brain_dim) final conditioning for DiT
+        Each guidance channel: proj → cross-attn(z_b, guidance) → alpha * result
+        All channels added to z_b as residuals.
         """
-        B = z_b.shape[0]
-        guidance_tokens = []  # unweighted tokens for cross-attention
-        alpha_weights = []     # per-token alpha weights (applied AFTER attention)
+        context = z_b.clone()
+        q = self.norm(z_b)
 
-        # Collect guidance tokens WITHOUT alpha weighting
-        # Alpha is applied after cross-attention to avoid dead gradient problem
         if self.use_keyframe_guidance and "z_key" in slow_out:
             g_key = self.key_proj(slow_out["z_key"]).unsqueeze(1)  # (B, 1, D)
-            guidance_tokens.append(g_key)
-            alpha_weights.append(alphas["alpha_key"].unsqueeze(-1))  # (B, 1, 1)
+            context = context + alphas["alpha_key"].unsqueeze(-1) * self.key_attn(q, g_key)
 
         if self.use_text_guidance and "z_txt" in slow_out:
             g_txt = self.txt_proj(slow_out["z_txt"]).unsqueeze(1)
-            guidance_tokens.append(g_txt)
-            alpha_weights.append(alphas["alpha_txt"].unsqueeze(-1))
+            context = context + alphas["alpha_txt"].unsqueeze(-1) * self.txt_attn(q, g_txt)
 
         if self.use_motion_guidance:
             eeg_feat = fast_out.get("eeg_pooled_proj", None)
@@ -118,27 +109,9 @@ class MultiGuidanceAdapter(nn.Module):
                     g_temporal = self.temporal_proj(fast_out["global_dyn_token"])
                     gate = torch.sigmoid(self.temporal_gate(fast_out["global_dyn_token"]))
                     g_mot = g_mot + gate.unsqueeze(-1) * g_temporal.unsqueeze(1)
-                guidance_tokens.append(g_mot)
-                alpha_weights.append(alphas["alpha_mot"].unsqueeze(-1))
+                context = context + alphas["alpha_mot"].unsqueeze(-1) * self.mot_attn(q, g_mot)
 
         if self.use_brain_latent_guidance:
-            g_brain = z_b.mean(dim=1, keepdim=True)
-            guidance_tokens.append(g_brain)
-            alpha_weights.append(alphas["alpha_brain"].unsqueeze(-1))
-
-        if len(guidance_tokens) > 0:
-            # Stack unweighted guidance tokens: (B, N_guide, brain_dim)
-            guide_kv = torch.cat(guidance_tokens, dim=1)
-            # Cross-attention: all tokens participate equally
-            q = self.norm_q(z_b)
-            kv = self.norm_kv(guide_kv)
-            attn_out = self._cross_attend(q, kv)  # (B, S, brain_dim)
-
-            # Apply alpha weights AFTER attention via weighted residual
-            # Each guidance channel's contribution is scaled by its alpha
-            alpha_scale = torch.cat(alpha_weights, dim=1).mean(dim=1, keepdim=True)  # (B, 1, 1)
-            context = z_b + alpha_scale * attn_out
-        else:
-            context = z_b
+            context = context + alphas["alpha_brain"].unsqueeze(-1) * z_b
 
         return self.out_proj(context)

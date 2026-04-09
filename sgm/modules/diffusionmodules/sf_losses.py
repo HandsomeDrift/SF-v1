@@ -258,18 +258,13 @@ class GuidanceLoss(nn.Module):
             total = total + self.lambda_gt * losses["L_gt"]
 
         # P2-3: L_gm — motion guidance consistency
-        # eeg_pooled_proj should correlate with flow magnitude trajectory
+        # Encourage motion feature energy to track flow magnitude
         if self.lambda_gm > 0 and "eeg_pooled_proj" in fast_out and "gt_flow_mag_traj" in targets:
-            mot_feat = F.normalize(fast_out["eeg_pooled_proj"], dim=-1)  # (B, 2048)
-            flow_gt = targets["gt_flow_mag_traj"]  # (B, T)
-            # Motion feature norm should correlate with total motion magnitude
-            mot_energy = mot_feat.norm(dim=-1)  # (B,) — always 1 after normalize, use pre-norm
-            mot_energy = fast_out["eeg_pooled_proj"].norm(dim=-1)  # (B,) actual energy
-            flow_energy = flow_gt.mean(dim=-1)  # (B,) average motion per clip
-            # Pearson-like loss: maximize correlation between motion energy and flow energy
-            losses["L_gm"] = 1.0 - F.cosine_similarity(
-                mot_energy.unsqueeze(-1), flow_energy.unsqueeze(-1), dim=0
-            ).mean()
+            mot_energy = fast_out["eeg_pooled_proj"].norm(dim=-1)  # (B,)
+            flow_energy = targets["gt_flow_mag_traj"].mean(dim=-1)  # (B,)
+            # Scale mot_energy to match flow_energy range via detached ratio
+            scale = (flow_energy.detach().mean() / (mot_energy.detach().mean() + 1e-8)).clamp(0.01, 100)
+            losses["L_gm"] = F.mse_loss(mot_energy * scale, flow_energy)
             total = total + self.lambda_gm * losses["L_gm"]
 
         return total, losses
