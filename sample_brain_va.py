@@ -209,9 +209,15 @@ def sampling_main(args, model_cls):
             if use_dana:
                 brain_embedder = model.conditioner.embedders[0]
                 if hasattr(brain_embedder, '_last_fast_out') and 'flow_traj_pred' in brain_embedder._last_fast_out:
-                    flow_traj = brain_embedder._last_fast_out['flow_traj_pred']  # (B, T_pred)
+                    flow_traj = brain_embedder._last_fast_out['flow_traj_pred']
+                    # Handle codebook mode: (B, T, K) logits → (B, T) scalar via weighted sum
+                    if flow_traj.ndim == 3:
+                        K = flow_traj.shape[-1]
+                        probs = torch.softmax(flow_traj, dim=-1)  # (B, T, K)
+                        bin_centers = torch.linspace(0, 1, K, device=flow_traj.device)
+                        flow_traj = (probs * bin_centers).sum(dim=-1)  # (B, T)
                     # Normalize to [0, 1] range using sigmoid
-                    dana_beta = torch.sigmoid(flow_traj - flow_traj.mean())  # center then sigmoid
+                    dana_beta = torch.sigmoid(flow_traj - flow_traj.mean())
 
             for index in range(args.batch_size):
 
