@@ -55,7 +55,7 @@ def build_embedder(model_config_path, device):
 def load_checkpoint(embedder, ckpt_path, device):
     """Load DeepSpeed checkpoint into SFBrainEmbedder."""
     print(f"Loading checkpoint: {ckpt_path}")
-    state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    state = torch.load(ckpt_path, map_location="cpu", weights_only=False, mmap=True)
     # DeepSpeed wraps in "module" key
     model_state = state.get("module", state)
 
@@ -211,7 +211,13 @@ def run_evaluation(embedder, dataset, device, max_samples=0):
 
         # --- Metric 2: Flow trajectory correlation ---
         if "flow_traj_pred" in fast_out and "gt_flow_mag_traj" in targets:
-            fp = fast_out["flow_traj_pred"].float().cpu().squeeze(0)  # (T,)
+            fp = fast_out["flow_traj_pred"].float().cpu().squeeze(0)
+            # P1-3: codebook mode outputs (T, K) logits → convert to (T,) via weighted sum
+            if fp.ndim == 2:
+                K = fp.shape[-1]
+                probs = torch.softmax(fp, dim=-1)
+                bin_centers = torch.linspace(0, 1, K)
+                fp = (probs * bin_centers).sum(dim=-1)  # (T,)
             fg = targets["gt_flow_mag_traj"].float().cpu().squeeze(0)  # (T,)
             T = min(len(fp), len(fg))
             all_flow_pred.append(fp[:T].numpy())

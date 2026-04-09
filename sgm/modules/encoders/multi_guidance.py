@@ -95,40 +95,49 @@ class MultiGuidanceAdapter(nn.Module):
             context: (B, S, brain_dim) final conditioning for DiT
         """
         B = z_b.shape[0]
-        guidance_tokens = []
+        guidance_tokens = []  # unweighted tokens for cross-attention
+        alpha_weights = []     # per-token alpha weights (applied AFTER attention)
 
-        # Collect guidance tokens, each weighted by alpha
+        # Collect guidance tokens WITHOUT alpha weighting
+        # Alpha is applied after cross-attention to avoid dead gradient problem
         if self.use_keyframe_guidance and "z_key" in slow_out:
             g_key = self.key_proj(slow_out["z_key"]).unsqueeze(1)  # (B, 1, D)
-            guidance_tokens.append(alphas["alpha_key"].unsqueeze(-1) * g_key)
+            guidance_tokens.append(g_key)
+            alpha_weights.append(alphas["alpha_key"].unsqueeze(-1))  # (B, 1, 1)
 
         if self.use_text_guidance and "z_txt" in slow_out:
             g_txt = self.txt_proj(slow_out["z_txt"]).unsqueeze(1)
-            guidance_tokens.append(alphas["alpha_txt"].unsqueeze(-1) * g_txt)
+            guidance_tokens.append(g_txt)
+            alpha_weights.append(alphas["alpha_txt"].unsqueeze(-1))
 
         if self.use_motion_guidance:
             eeg_feat = fast_out.get("eeg_pooled_proj", None)
             if eeg_feat is not None:
                 g_mot = self.mot_proj(eeg_feat).unsqueeze(1)
-                # P1: enhance with temporal dynamics
                 if self.use_temporal_guidance and "global_dyn_token" in fast_out:
                     g_temporal = self.temporal_proj(fast_out["global_dyn_token"])
                     gate = torch.sigmoid(self.temporal_gate(fast_out["global_dyn_token"]))
                     g_mot = g_mot + gate.unsqueeze(-1) * g_temporal.unsqueeze(1)
-                guidance_tokens.append(alphas["alpha_mot"].unsqueeze(-1) * g_mot)
+                guidance_tokens.append(g_mot)
+                alpha_weights.append(alphas["alpha_mot"].unsqueeze(-1))
 
         if self.use_brain_latent_guidance:
-            # Use pooled z_b as a global summary token
-            g_brain = (alphas["alpha_brain"].unsqueeze(-1) * z_b.mean(dim=1, keepdim=True))
+            g_brain = z_b.mean(dim=1, keepdim=True)
             guidance_tokens.append(g_brain)
+            alpha_weights.append(alphas["alpha_brain"].unsqueeze(-1))
 
         if len(guidance_tokens) > 0:
-            # Stack all guidance tokens: (B, N_guide, brain_dim)
+            # Stack unweighted guidance tokens: (B, N_guide, brain_dim)
             guide_kv = torch.cat(guidance_tokens, dim=1)
-            # Cross-attention: spatial tokens query guidance tokens
+            # Cross-attention: all tokens participate equally
             q = self.norm_q(z_b)
             kv = self.norm_kv(guide_kv)
-            context = z_b + self._cross_attend(q, kv)
+            attn_out = self._cross_attend(q, kv)  # (B, S, brain_dim)
+
+            # Apply alpha weights AFTER attention via weighted residual
+            # Each guidance channel's contribution is scaled by its alpha
+            alpha_scale = torch.cat(alpha_weights, dim=1).mean(dim=1, keepdim=True)  # (B, 1, 1)
+            context = z_b + alpha_scale * attn_out
         else:
             context = z_b
 
