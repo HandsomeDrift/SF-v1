@@ -70,6 +70,16 @@ class CrossModalGatedFusion(nn.Module):
                 "fixed_alpha", torch.ones(num_alphas) / num_alphas
             )
 
+    def reset_gate_net(self):
+        """Re-initialize gate_net to sigmoid(0)=0.5 for all channels.
+        Call after loading checkpoint to avoid inheriting saturated alpha values."""
+        if hasattr(self, 'gate_net'):
+            nn.init.zeros_(self.gate_net[-2].weight)
+            nn.init.zeros_(self.gate_net[-2].bias)
+            # Also reset first layer to small values
+            nn.init.xavier_uniform_(self.gate_net[0].weight, gain=0.1)
+            nn.init.zeros_(self.gate_net[0].bias)
+
     def forward(self, slow_feat, fast_feat):
         """
         Args:

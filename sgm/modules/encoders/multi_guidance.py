@@ -20,6 +20,11 @@ class GuidanceCrossAttention(nn.Module):
         self.k_proj = nn.Linear(brain_dim, brain_dim)
         self.v_proj = nn.Linear(brain_dim, brain_dim)
         self.out_proj = nn.Linear(brain_dim, brain_dim)
+        # Zero-init out_proj: initial cross-attn output = 0, not random noise.
+        # This prevents alpha from being pushed to 0 by noisy initial output,
+        # while cross-attn still receives gradient through non-zero alpha (0.5).
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
 
     def forward(self, query, kv):
         """query: (B, S, D), kv: (B, 1, D) → (B, S, D)"""
@@ -85,11 +90,25 @@ class MultiGuidanceAdapter(nn.Module):
             nn.Linear(brain_dim, brain_dim),
         )
 
+    def reset_guidance_outputs(self):
+        """Zero-init all cross-attention out_proj layers.
+        After reset, guidance channels output 0 (neutral, not noisy),
+        so alpha has no reason to collapse while cross-attn learns."""
+        for name in ['key_attn', 'txt_attn', 'mot_attn']:
+            attn = getattr(self, name, None)
+            if attn is not None:
+                nn.init.zeros_(attn.out_proj.weight)
+                nn.init.zeros_(attn.out_proj.bias)
+
     def forward(self, z_b, alphas, slow_out, fast_out):
         """
         Each guidance channel: proj → cross-attn(z_b, guidance) → alpha * result
         All channels added to z_b as residuals.
         """
+        # Differentiable alpha floor: map [0,1] → [0.05, 0.95]
+        # Unlike clamp, gradient always flows (0.9) so gate_net can learn.
+        alphas = {k: v * 0.9 + 0.05 for k, v in alphas.items()}
+
         context = z_b.clone()
         q = self.norm(z_b)
 

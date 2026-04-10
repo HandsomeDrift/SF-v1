@@ -32,6 +32,7 @@ class SATVideoDiffusionEngineBrain(nn.Module):
         self._freeze_slow = model_config.get('freeze_slow_branch', False)
         self._freeze_fast = model_config.get('freeze_fast_branch', False)
         self._unfreeze_fusion = model_config.get('unfreeze_fusion', False)
+        self._reset_gate_net = model_config.get('reset_gate_net', False)
         # model args preprocess
         log_keys = model_config.get("log_keys", None)
         input_key = model_config.get("input_key", "mp4")
@@ -183,6 +184,21 @@ class SATVideoDiffusionEngineBrain(nn.Module):
                     p.requires_grad_(True)
                     fusion_unfrozen += p.numel()
             print_rank0(f"[Fusion] Unfroze fusion modules: {fusion_unfrozen:,} params")
+
+        # Stage 3: reset gate_net + guidance cross-attn out_proj
+        # Avoids inheriting saturated sigmoid values (gate_net) and noisy
+        # cross-attn output (out_proj) from Stage 2 where alpha was 0.
+        # After reset: alpha=0.5, cross_attn_output=0 → neutral start,
+        # cross-attn learns through non-zero alpha before alpha adapts.
+        _reset_gate_net = getattr(self, '_reset_gate_net', False)
+        if _reset_gate_net:
+            for emb in self.conditioner.embedders:
+                if hasattr(emb, 'gated_fusion') and hasattr(emb.gated_fusion, 'reset_gate_net'):
+                    emb.gated_fusion.reset_gate_net()
+                    print_rank0("[GatedFusion] Reset gate_net → sigmoid(0)=0.5 for all alphas")
+                if hasattr(emb, 'guidance_adapter') and hasattr(emb.guidance_adapter, 'reset_guidance_outputs'):
+                    emb.guidance_adapter.reset_guidance_outputs()
+                    print_rank0("[MultiGuidance] Reset cross-attn out_proj → output=0 (neutral)")
 
         # Recount trainable after all freezing/unfreezing
         total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -472,6 +488,7 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
         self._freeze_slow = model_config.get('freeze_slow_branch', False)
         self._freeze_fast = model_config.get('freeze_fast_branch', False)
         self._unfreeze_fusion = model_config.get('unfreeze_fusion', False)
+        self._reset_gate_net = model_config.get('reset_gate_net', False)
         # model args preprocess
         log_keys = model_config.get("log_keys", None)
         input_key = model_config.get("input_key", "mp4")
@@ -623,6 +640,21 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
                     p.requires_grad_(True)
                     fusion_unfrozen += p.numel()
             print_rank0(f"[Fusion] Unfroze fusion modules: {fusion_unfrozen:,} params")
+
+        # Stage 3: reset gate_net + guidance cross-attn out_proj
+        # Avoids inheriting saturated sigmoid values (gate_net) and noisy
+        # cross-attn output (out_proj) from Stage 2 where alpha was 0.
+        # After reset: alpha=0.5, cross_attn_output=0 → neutral start,
+        # cross-attn learns through non-zero alpha before alpha adapts.
+        _reset_gate_net = getattr(self, '_reset_gate_net', False)
+        if _reset_gate_net:
+            for emb in self.conditioner.embedders:
+                if hasattr(emb, 'gated_fusion') and hasattr(emb.gated_fusion, 'reset_gate_net'):
+                    emb.gated_fusion.reset_gate_net()
+                    print_rank0("[GatedFusion] Reset gate_net → sigmoid(0)=0.5 for all alphas")
+                if hasattr(emb, 'guidance_adapter') and hasattr(emb.guidance_adapter, 'reset_guidance_outputs'):
+                    emb.guidance_adapter.reset_guidance_outputs()
+                    print_rank0("[MultiGuidance] Reset cross-attn out_proj → output=0 (neutral)")
 
         # Recount trainable after all freezing/unfreezing
         total_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
