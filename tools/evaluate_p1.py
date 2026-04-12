@@ -45,6 +45,11 @@ def build_embedder(model_config_path, device):
     with open(model_config_path) as f:
         cfg = yaml.safe_load(f)
     emb_cfg = cfg["model"]["conditioner_config"]["params"]["emb_models"][0]["params"]
+    # Mirror the training-time override path in diffusion_video_brain.py so eval
+    # uses the same embedder shape as the checkpoint-producing run.
+    for key in ["sparse_attn_drop", "flow_codebook_k"]:
+        if key in cfg.get("model", {}):
+            emb_cfg[key] = cfg["model"][key]
     embedder = SFBrainEmbedder(**emb_cfg)
     embedder.to(device).to(torch.bfloat16)
     embedder.mode = "infer"  # skip CLIP loss

@@ -13,6 +13,7 @@ set -e
 
 PYTHON=/public/home/maoyaoxin/anaconda3/envs/cinebrain/bin/python
 export CUDA_HOME=/usr/local/cuda-12.4
+NGPU=${NGPU:-1}  # Number of GPUs, set via env: NGPU=4 bash run_phase1_pipeline.sh
 
 cd /public/home/maoyaoxin/xxt/SF-v1/CineBrain
 
@@ -73,7 +74,7 @@ echo "============================================"
 echo "  STAGE 1: Branch Pre-training ($S1_ITERS iters)"
 echo "============================================"
 
-$PYTHON -m torch.distributed.run --standalone --nproc_per_node=1 \
+$PYTHON -m torch.distributed.run --standalone --nproc_per_node=$NGPU \
     train_video_fmri.py \
     --base $MODEL_YAML configs/sf_v1/sf_v1_phase1_train.yaml $TMPDIR/s1_override.yaml \
     --seed 42 \
@@ -109,7 +110,7 @@ echo "============================================"
 echo "  STAGE 2: Fusion Training ($S2_ITERS iters)"
 echo "============================================"
 
-$PYTHON -m torch.distributed.run --standalone --nproc_per_node=1 \
+$PYTHON -m torch.distributed.run --standalone --nproc_per_node=$NGPU \
     train_video_fmri.py \
     --base $MODEL_YAML configs/sf_v1/sf_v1_stage2_fusion.yaml $TMPDIR/s2_override.yaml \
     --seed 42 \
@@ -143,7 +144,7 @@ echo "============================================"
 echo "  STAGE 3: Joint Fine-tuning ($S3_ITERS iters)"
 echo "============================================"
 
-$PYTHON -m torch.distributed.run --standalone --nproc_per_node=1 \
+$PYTHON -m torch.distributed.run --standalone --nproc_per_node=$NGPU \
     train_video_fmri.py \
     --base $MODEL_YAML configs/sf_v1/sf_v1_stage3_joint.yaml $TMPDIR/s3_override.yaml \
     --seed 42 \

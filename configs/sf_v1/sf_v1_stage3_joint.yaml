@@ -76,6 +76,7 @@ deepspeed:
     reduce_scatter: true
     stage: 2
 model:
+  reset_gate_net: true
   # DiT: LoRA fine-tuning (base weights frozen, only matrix_A/B trainable)
   lora_train: true
   not_trainable_prefixes:
