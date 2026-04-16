@@ -26,6 +26,9 @@ local_config.yaml
 *.swo
 *~
 
+# Git worktrees
+.worktrees/
+
 # Temporary split JSON files
 sub*_remaining_part*.json
 cross_*_part*.json

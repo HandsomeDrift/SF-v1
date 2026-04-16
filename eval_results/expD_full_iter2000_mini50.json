@@ -1,0 +1,53 @@
+{
+  "n_samples": 50,
+  "valid_L_temp_delta_mean": 0.039423841275274756,
+  "valid_L_temp_delta_std": 0.029708668617773337,
+  "valid_L_temp_abs_mean": 0.05079543836414814,
+  "per_frame_cos_mean": {
+    "1": 0.6919023199379444,
+    "2": 0.6249492406845093,
+    "3": 0.6356668904423713,
+    "4": 0.552151407301426,
+    "5": 0.5388478210568428,
+    "6": 0.5657127341628074,
+    "7": 0.5179487049579621,
+    "8": 0.5079494369029999
+  },
+  "flow_traj_pearson_r": 0.3605830669403076,
+  "flow_traj_pearson_p": 2.903209980202697e-15,
+  "flow_traj_PASS": "True",
+  "flow_traj_spearman_mean": 0.36155204251286505,
+  "flow_traj_spearman_std": 0.22854997645734135,
+  "fast_slow_cosine_mean": -0.01764929311349988,
+  "fast_slow_cosine_std": 0.003238245990354376,
+  "fast_slow_cosine_median": -0.016271699219942093,
+  "fast_slow_independence_note": "Lower = more independent. P0 baseline ~0.9+",
+  "gating_alpha_mot_mean": 0.840625,
+  "gating_alpha_mot_high_dyn_mean": 0.85046875,
+  "gating_alpha_mot_low_dyn_mean": 0.83078125,
+  "gating_alpha_mot_dyn_spearman": 0.07487552756872586,
+  "gating_alpha_mot_dyn_p": 0.6053062304648849,
+  "gating_alpha_key_mean": 0.5670703125,
+  "gating_alpha_txt_mean": 0.249781494140625,
+  "gating_alpha_brain_mean": 0.953671875,
+  "checks": {
+    "1_temporal_learnability": {
+      "pass": true,
+      "note": "valid L_temp_delta should decrease"
+    },
+    "2_flow_traj_pearson": {
+      "pass": "True",
+      "note": "Pearson r > 0.3"
+    },
+    "3_fast_slow_independence": {
+      "pass": true,
+      "note": "cosine < 0.85 (lower = better)"
+    },
+    "4_gating_behavior": {
+      "pass": true,
+      "note": "alpha_mot correlates with dynamics"
+    }
+  },
+  "checks_passed": 4,
+  "checks_total": 4
+}

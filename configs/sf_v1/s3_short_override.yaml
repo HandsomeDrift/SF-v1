@@ -1,0 +1,4 @@
+args:
+  train_iters: 100
+  eval_interval: 100
+  save_interval: 50

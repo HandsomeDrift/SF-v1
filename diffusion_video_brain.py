@@ -261,7 +261,8 @@ class SATVideoDiffusionEngineBrain(nn.Module):
         # Add SF loss breakdown to loss_dict for logging
         if hasattr(self.loss_fn, '_last_loss_breakdown'):
             for k, v in self.loss_fn._last_loss_breakdown.items():
-                loss_dict[k] = torch.tensor(v, dtype=torch.float32, device=loss.device)
+                if isinstance(v, (int, float)):
+                    loss_dict[k] = torch.tensor(v, dtype=torch.float32, device=loss.device)
 
         return loss, loss_dict
 
@@ -718,7 +719,8 @@ class SATVideoDiffusionEngineBrain_fix(nn.Module):
         # Add SF loss breakdown to loss_dict for logging
         if hasattr(self.loss_fn, '_last_loss_breakdown'):
             for k, v in self.loss_fn._last_loss_breakdown.items():
-                loss_dict[k] = torch.tensor(v, dtype=torch.float32, device=loss.device)
+                if isinstance(v, (int, float)):
+                    loss_dict[k] = torch.tensor(v, dtype=torch.float32, device=loss.device)
 
         return loss, loss_dict
 

@@ -153,7 +153,7 @@ def training_main(args, model_cls, forward_step_function, create_dataset_functio
                 torch.manual_seed(args.seed)
                 torch.cuda.manual_seed(args.seed)
                 # ---------
-                
+
                 iteration, skipped = train(model, optimizer,
                     lr_scheduler,
                     train_data,

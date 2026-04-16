@@ -198,7 +198,9 @@ class FastBranchDistillLoss(nn.Module):
                     T = min(flow_pred.shape[1], flow_gt.shape[1])
                     # Quantize GT to nearest codebook bin (uniform bins in [0, max_val])
                     flow_gt_clip = flow_gt[:, :T].clamp(0)
-                    max_val = flow_gt_clip.max().clamp(min=1e-6)
+                    # P1-3: Use fixed max_val=1.0 for consistent bin semantics across samples/batches.
+                    # This matches evaluation bin_centers (linspace 0 to 1).
+                    max_val = 1.0
                     bin_indices = (flow_gt_clip / max_val * (K - 1)).long().clamp(0, K - 1)
                     losses["L_flow_traj"] = F.cross_entropy(
                         flow_pred[:, :T].reshape(-1, K), bin_indices.reshape(-1)
