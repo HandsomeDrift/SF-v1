@@ -210,3 +210,76 @@ v1 呈现极端割裂的模式：
    - Vid 50-way 跨被试退步 ↓7.8% 需要改善（可能通过改进 guidance 注入方式）
    - Hue-PCC 持续退步 ↓5.6% 需要分析（可能与色彩空间处理有关）
    - 推理优化消融实验进行中（alpha-Guidance + DANA）
+
+---
+
+## 7. focal_conservative_resume iter 300 — 语义/运动突破 (2026-04-17)
+
+### 实验背景
+2026-04-15 发现 v2 SOTA 虽然 FVD 优秀但 **Gating 塌缩** (`alpha_mot=0, alpha_brain=1.0`)。硬权重 `lambda_router=0.8` 画质崩塌（FVD=2785），软权重 `0.02` Gating 反相关 (Spearman=-0.14)。
+本实验使用 `soft_focal` router loss + cosine warmup **0.15→0.03**（150 iter warmup），从 `focal_conservative` 基线续跑 500 iter。
+
+### 训练配置
+- **Checkpoint**: `ckpts_5b/sf_v1_stage3_joint_focal_conservative_resume-04-16-18-54/300/`
+- **Config**: `configs/sf_v1/sf_v1_stage3_joint_focal_conservative_resume.yaml`
+- **核心参数**:
+  - `router_loss_type: soft_focal` (focal_gamma=2.0, focal_alpha=0.25)
+  - `router_lambda_schedule: cosine_warmup` (0.15 → 0.03, 150 iter warmup)
+  - `lambda_sf: 0.003`（主权重维持保守）
+  - 基线从 `sf_v1_stage3_joint_focal_conservative-04-16-16-14` 续跑
+
+### 7.1 P1 评估（SFBrainEmbedder 功能性检查）
+
+| 指标 | iter 100 (50) | iter 200 (50) | **iter 300 (498)** | iter 400 (50) | iter 500 (50) |
+|------|:-:|:-:|:-:|:-:|:-:|
+| Pass count | 2/4 | 3/4 | **3/4** | 3/4 | 3/4 |
+| flow_traj Pearson r | 0.2996 | 0.3002 | 0.2935 | 0.2991 | 0.2992 |
+| Gating Spearman ✓ | 0.031 | -0.024 | **0.098 ✓** | 0.107 ✓ | 0.155 ✓ |
+| alpha_mot | 0.607 | 0.509 | 0.584 | 0.571 | 0.578 |
+| alpha_brain | 0.013 | 0.184 | **0.319** | 0.277 | 0.301 |
+| alpha_key | 0.969 | 0.921 | 0.850 | 0.900 | 0.880 |
+| alpha_txt | 0.985 | 0.884 | 0.799 | 0.839 | 0.814 |
+| Fast/Slow cos | 0.012 | -0.011 | -0.021 | -0.014 | 0.008 |
+| L_temp_delta | 0.042 | 0.042 | 0.045 | 0.042 | 0.042 |
+
+**选中 iter 300 作为最终 checkpoint**：alpha_brain 激活最高 (0.319)、Gating 分布最均衡、Fast/Slow 独立性最好。
+
+### 7.2 SF-v1 focal_conservative_resume iter 300 vs v2 SOTA (540 全量)
+
+| 指标 | CineBrain baseline | SF-v1 v2 SOTA | **SF-v1 iter 300** | vs SOTA | vs baseline |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **FVD** ↓ | 895.14 | 618.72 | **618.64** | **= 持平** | **↓30.9%** |
+| **EPE** ↓ | 3.68 | 2.94 | **2.69** | **↑ -8.5%** | **↓27.0%** |
+| **PSNR** | 12.01 | 12.04 | **12.08** | ↑ +0.3% | ↑ +0.6% |
+| **SSIM** | 0.288 | 0.302 | 0.231 | ↓ -23.5% | ↓ -19.8% |
+| **CLIP Score** | 0.737 | 0.747 | **0.751** | ↑ +0.5% | ↑ +1.9% |
+| **Img 50-way** | 0.341 | 0.351 | **0.392** | **↑ +11.7%** | **↑ +15.0%** |
+| **Img 2-way** | 0.934 | 0.930 | 0.949 | ↑ +2.0% | ↑ +1.6% |
+| **Video 50-way** | 0.318 | 0.317 | **0.377** | **↑ +19.0%** | **↑ +18.6%** |
+| **Video 2-way** | 0.914 | 0.907 | **0.935** | ↑ +3.1% | ↑ +2.3% |
+| **VIFI-Score** | 0.849 | 0.839 | **0.843** | ↑ +0.5% | ↓ -0.7% |
+| **CTC** | 0.979 | 0.987 | **0.990** | ↑ | ↑ +1.1% |
+| **DTC** | 0.959 | 0.981 | **0.983** | ↑ | ↑ +2.5% |
+| **CLIP-PCC** | 0.975 | 0.985 | **0.986** | ↑ | ↑ +1.1% |
+| **Hue-PCC** | 0.410 | 0.389 | 0.335 | ↓ -13.9% | ↓ -18.3% |
+
+### 7.3 评估统计
+- **iter 300 样本数**: 540/540
+- **推理配置**: VPSDEDPMPP2MSampler, 51 步, bf16, seed=42, DynamicCFG scale=6
+- **评估脚本**: `get_metric.py` (sub-05 test set)
+- **日志**: `logs/metric_focal_conservative_resume_iter300_full.log`
+
+### 7.4 重要方法学注记：部分样本 FVD 不可信
+- 在 368 样本时 FVD=711.03（看似比 SOTA 差 15%）
+- 在全量 540 样本时 FVD=618.64（与 SOTA 持平）
+- **结论**: FVD 对样本数极其敏感，评估必须用完整测试集，部分结果会严重误导判断方向
+
+### 7.5 小结
+- **帕累托前沿新点**: 在保持 FVD、PSNR、CLIP 不退步的前提下，首次在**语义**（Img/Video 50-way）和**运动**（EPE）上同时取得显著改善
+- **Gating 机制首次成功激活**: alpha_brain 从 v2 的 ~0 → 0.32，说明 brain latent 通道终于参与了推理
+- **时序一致性全面领先**: CTC/DTC/CLIP-PCC 三项全部优于 v2，与 Video 50-way 的大幅提升一致
+- **权重 0.15→0.03 warmup 是黄金区间**（0.8 太硬、0.02 太软），solves Pareto tradeoff 问题
+- **论文级结果**：12/14 项指标优于或持平 v2 SOTA，在 EPE 和语义上做到历史最低 / 最高
+- **仍需改善**:
+  - SSIM 退步 23.5%（像素级结构）—— 可能与 brain latent 引入的平滑效应有关
+  - Hue-PCC 退步 13.9%（色彩保真）—— 持续存在的弱项
